@@ -94,7 +94,7 @@ private struct OnboardingFlyout: View {
                 title: "Window controls",
                 detail: state.accessibilityService.isTrusted
                     ? "Accessibility access enabled"
-                    : "Required to minimize, restore, and close windows",
+                    : "Required for snapping, resizing, restoring, and closing windows",
                 symbol: state.accessibilityService.isTrusted
                     ? "checkmark.circle.fill"
                     : "macwindow.badge.plus",
@@ -225,6 +225,7 @@ private struct SettingsFlyout: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     iconSizeSetting
+                    navigationIconSizeSetting
 
                     settingRow(
                         title: "Hide the macOS Dock",
@@ -244,6 +245,65 @@ private struct SettingsFlyout: View {
                             set: { service.setLaunchAtLogin($0) }
                         )
                     )
+
+                    Divider()
+
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack {
+                            Label("Window management", systemImage: "rectangle.3.group")
+                                .font(.system(size: 14, weight: .semibold))
+                            Spacer()
+                            Button("Reset", action: service.resetWindowManagementSettings)
+                                .buttonStyle(.bordered)
+                        }
+
+                        settingRow(
+                            title: "Enable window management",
+                            detail: "Keep application windows above the taskbar and enable snap controls.",
+                            isOn: $service.windowManagementEnabled
+                        )
+                        settingRow(
+                            title: "Snap windows at screen edges",
+                            detail: "Drag a title bar to an edge or corner to arrange its window.",
+                            isOn: $service.edgeSnappingEnabled
+                        )
+                        .disabled(!service.windowManagementEnabled)
+                        settingRow(
+                            title: "Show Snap Layouts",
+                            detail: "Hover over a window’s green button to choose a layout.",
+                            isOn: $service.snapLayoutsEnabled
+                        )
+                        .disabled(!service.windowManagementEnabled)
+                        settingRow(
+                            title: "Keyboard snapping",
+                            detail: "Use Control–Option–Arrow; add Shift to move between displays.",
+                            isOn: $service.keyboardSnappingEnabled
+                        )
+                        .disabled(!service.windowManagementEnabled)
+
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack {
+                                Text("Edge activation distance")
+                                    .font(.system(size: 13, weight: .semibold))
+                                Spacer()
+                                Text("\(Int(service.snapActivationDistance.rounded())) pt")
+                                    .font(.caption)
+                                    .monospacedDigit()
+                            }
+                            Slider(
+                                value: $service.snapActivationDistance,
+                                in: 6...32,
+                                step: 1
+                            )
+                            .disabled(
+                                !service.windowManagementEnabled
+                                    || !service.edgeSnappingEnabled
+                            )
+                        }
+                        .padding(10)
+                        .background(TaskbarTheme.hoverBackground)
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                    }
 
                     Divider()
 
@@ -345,6 +405,58 @@ private struct SettingsFlyout: View {
                     .disabled(
                         service.taskbarIconSize
                             == PreferencesService.defaultTaskbarIconSize
+                    )
+            }
+        }
+        .padding(11)
+        .background(TaskbarTheme.hoverBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    private var navigationIconSizeSetting: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Search and Task View icon size")
+                        .font(.system(size: 13, weight: .semibold))
+                    Text("Changes navigation icons independently from application icons.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Text(
+                    service.navigationIconSize.formatted(
+                        .number.precision(.fractionLength(0...1))
+                    ) + " pt"
+                )
+                .font(.system(size: 12, weight: .semibold))
+                .monospacedDigit()
+            }
+
+            HStack(spacing: 12) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 12))
+                    .frame(width: 20)
+                Slider(
+                    value: $service.navigationIconSize,
+                    in: PreferencesService.minimumNavigationIconSize...PreferencesService.maximumNavigationIconSize,
+                    step: 0.5
+                )
+                Image(systemName: "rectangle.on.rectangle")
+                    .font(.system(size: 26))
+                    .frame(width: 32)
+            }
+
+            HStack {
+                Text("Default: 16 pt")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button("Reset", action: service.resetNavigationIconSize)
+                    .buttonStyle(.bordered)
+                    .disabled(
+                        service.navigationIconSize
+                            == PreferencesService.defaultNavigationIconSize
                     )
             }
         }
@@ -731,7 +843,7 @@ private struct AccessibilityPermissionView: View {
                 .font(.system(size: 17, weight: .semibold))
 
             Text(
-                "Allow Accessibility access to minimize, restore, select, and close windows from the taskbar. App launching still works without it."
+                "Allow Accessibility access once to snap, move, resize, minimize, restore, select, and close windows. This does not require separate access for every application. App launching still works without it."
             )
             .foregroundStyle(.secondary)
 
@@ -1046,13 +1158,22 @@ private struct NetworkFlyout: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(service.networkName ?? "Connected network")
                                 .font(.system(size: 14, weight: .semibold))
-                            Text(service.networkName == nil ? "Name unavailable" : "Connected")
+                            Text(
+                                service.networkName == nil
+                                    ? "Network name unavailable"
+                                    : "Connected"
+                            )
                                 .font(.caption)
-                                .foregroundStyle(TaskbarTheme.activeIndicator)
+                                .foregroundStyle(
+                                    service.networkName == nil
+                                        ? Color.secondary
+                                        : TaskbarTheme.activeIndicator
+                                )
                         }
                         Spacer()
                         Button("Disconnect", action: service.disconnect)
                             .buttonStyle(.bordered)
+                            .controlSize(.small)
                     }
                     .padding(10)
                     .background(TaskbarTheme.hoverBackground)
@@ -1069,10 +1190,14 @@ private struct NetworkFlyout: View {
                     }
                     Button(action: service.scan) {
                         Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 12, weight: .semibold))
+                            .frame(width: 28, height: 28)
+                            .contentShape(Rectangle())
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(WindowsTaskbarButtonStyle())
                     .disabled(service.isScanning)
                     .help("Scan again")
+                    .accessibilityLabel("Scan for Wi-Fi networks")
                 }
 
                 if service.isScanning && service.availableNetworks.isEmpty {
@@ -1086,17 +1211,29 @@ private struct NetworkFlyout: View {
                     .frame(maxWidth: .infinity, minHeight: 78)
                 } else if service.scanState == .empty {
                     VStack(spacing: 7) {
-                        Image(systemName: "wifi.exclamationmark")
+                        Image(
+                            systemName: service.isConnected
+                                ? "wifi"
+                                : "wifi.exclamationmark"
+                        )
                             .font(.system(size: 22))
                             .foregroundStyle(.secondary)
-                        Text("No networks found")
+                        Text(
+                            service.isConnected
+                                ? "No additional networks found"
+                                : "No networks found"
+                        )
                             .font(.system(size: 13, weight: .semibold))
-                        Text("Try scanning again or move closer to the router.")
+                        Text(
+                            service.isConnected
+                                ? "You are connected. Try scanning again to refresh this list."
+                                : "Try scanning again or move closer to the router."
+                        )
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
                     .multilineTextAlignment(.center)
-                    .frame(maxWidth: .infinity, minHeight: 92)
+                    .frame(maxWidth: .infinity, minHeight: 72)
                 } else if case let .failed(message) = service.scanState {
                     VStack(spacing: 8) {
                         Image(systemName: "exclamationmark.triangle")

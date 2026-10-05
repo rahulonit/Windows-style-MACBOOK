@@ -14,7 +14,7 @@ struct TaskbarView: View {
 
     private var appIconSize: CGFloat { CGFloat(preferences.taskbarIconSize) }
     private var navigationIconSize: CGFloat {
-        TaskbarTheme.navigationIconSize(for: appIconSize)
+        CGFloat(preferences.navigationIconSize)
     }
     private var startIconSize: CGFloat {
         TaskbarTheme.startIconSize(for: appIconSize)
@@ -25,6 +25,9 @@ struct TaskbarView: View {
     private var buttonSize: CGFloat { TaskbarTheme.buttonSize(for: appIconSize) }
     private var buttonSpacing: CGFloat { TaskbarTheme.buttonSpacing(for: appIconSize) }
     private var taskbarHeight: CGFloat { TaskbarTheme.height(for: appIconSize) }
+    private var trayControlWidth: CGFloat {
+        TaskbarTheme.trayControlWidth(for: buttonSize)
+    }
 
     var body: some View {
         GeometryReader { geometry in
@@ -33,8 +36,8 @@ struct TaskbarView: View {
                 Color(red: 0.05, green: 0.08, blue: 0.13).opacity(0.58)
 
                 Rectangle()
-                    .fill(Color.white.opacity(0.16))
-                    .frame(height: 0.5)
+                    .fill(Color(red: 0.56, green: 0.59, blue: 0.64).opacity(0.34))
+                    .frame(height: 1)
                     .frame(maxHeight: .infinity, alignment: .top)
 
                 HStack(spacing: 0) {
@@ -68,16 +71,23 @@ struct TaskbarView: View {
     }
 
     private var leftRegion: some View {
-        TaskbarButton(
-            accessibilityLabel: "Widgets and notifications",
-            buttonSize: buttonSize
-        ) {
+        Button {
             state.toggleFlyout(.notificationCenter)
-        } content: {
-            Image(systemName: "cloud.sun.fill")
-                .font(.system(size: navigationIconSize))
-                .symbolRenderingMode(.multicolor)
+        } label: {
+            HStack(spacing: 7) {
+                Image(systemName: "cloud.sun.fill")
+                    .font(.system(size: navigationIconSize))
+                    .symbolRenderingMode(.multicolor)
+                Text("Widgets")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(TaskbarTheme.foreground)
+            }
+            .frame(width: max(86, buttonSize * 1.75), height: buttonSize)
+            .contentShape(Rectangle())
         }
+        .buttonStyle(WindowsTaskbarButtonStyle())
+        .help("Widgets and notifications")
+        .accessibilityLabel("Widgets and notifications")
     }
 
     @ViewBuilder
@@ -120,6 +130,7 @@ struct TaskbarView: View {
                     .font(.system(size: navigationIconSize, weight: .regular))
                     .foregroundStyle(TaskbarTheme.foreground)
             }
+            .padding(.trailing, TaskbarTheme.navigationAppSeparation)
 
             ForEach(visibleApps) { app in
                 TaskbarAppButton(
@@ -148,6 +159,15 @@ struct TaskbarView: View {
                             Button("Enable window controls") {
                                 state.showAccessibilityOnboarding()
                             }
+                        }
+                        if state.accessibilityService.isTrusted,
+                           state.windowCount(for: app) > 0 {
+                            Divider()
+                            Button("Maximize") { state.snap(app, to: .maximize) }
+                            Button("Snap left") { state.snap(app, to: .leftHalf) }
+                            Button("Snap right") { state.snap(app, to: .rightHalf) }
+                            Button("Restore") { state.restoreWindow(for: app) }
+                            Button("Minimize") { state.minimizeWindow(for: app) }
                         }
                         if app.bundleIdentifier != TaskbarState.finderBundleIdentifier {
                             Divider()
@@ -182,43 +202,51 @@ struct TaskbarView: View {
     }
 
     private var rightRegion: some View {
-        HStack(spacing: buttonSpacing) {
-            compactButton("Hidden system controls", symbol: "chevron.up", iconSize: adaptiveTrayIconSize) {
+        HStack(alignment: .center, spacing: TaskbarTheme.traySpacing) {
+            compactButton(
+                "Hidden system controls",
+                symbol: "chevron.up",
+                iconSize: adaptiveTrayIconSize,
+                controlWidth: trayControlWidth
+            ) {
                 state.toggleFlyout(.quickSettings)
             }
             NetworkTrayButton(
                 service: state.networkService,
                 iconSize: TaskbarTheme.systemTrayIconSize,
-                controlHeight: buttonSize
+                controlHeight: buttonSize,
+                controlWidth: trayControlWidth
             ) {
                 state.toggleFlyout(.network)
             }
             AudioTrayButton(
                 service: state.audioService,
                 iconSize: TaskbarTheme.systemTrayIconSize,
-                controlHeight: buttonSize
+                controlHeight: buttonSize,
+                controlWidth: trayControlWidth
             ) {
                 state.toggleFlyout(.volume)
             }
             BatteryTrayButton(
                 service: state.batteryService,
                 iconSize: TaskbarTheme.systemTrayIconSize,
-                controlHeight: buttonSize
+                controlHeight: buttonSize,
+                controlWidth: max(62, trayControlWidth * 1.8)
             ) {
                 state.toggleFlyout(.battery)
             }
             Button {
                 state.toggleFlyout(.calendar)
             } label: {
-                ClockView()
-                    .contentShape(Rectangle())
+                ClockView(width: 82, height: buttonSize)
             }
             .buttonStyle(WindowsTaskbarButtonStyle())
             .help("Calendar and date")
             NotificationTrayButton(
                 service: state.notificationService,
                 iconSize: adaptiveTrayIconSize,
-                controlHeight: buttonSize
+                controlHeight: buttonSize,
+                controlWidth: trayControlWidth
             ) {
                 state.toggleFlyout(.notificationCenter)
             }
@@ -227,12 +255,13 @@ struct TaskbarView: View {
                 state.perform(SystemActions.showDesktop)
             } label: {
                 ZStack(alignment: .trailing) {
-                    Color.clear
+                    Color.white.opacity(0.035)
                     Rectangle()
-                        .fill(Color.white.opacity(0.28))
-                        .frame(width: 1)
+                        .fill(Color.white.opacity(0.42))
+                        .frame(width: 2)
+                        .padding(.vertical, 5)
                 }
-                .frame(width: 18, height: buttonSize)
+                .frame(width: 28, height: buttonSize)
                 .contentShape(Rectangle())
             }
             .buttonStyle(WindowsTaskbarButtonStyle())
@@ -246,12 +275,13 @@ struct TaskbarView: View {
         _ label: String,
         symbol: String,
         iconSize: CGFloat,
+        controlWidth: CGFloat,
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
             Image(systemName: symbol)
                 .font(.system(size: iconSize))
-                .frame(width: max(20, iconSize + 6), height: buttonSize)
+                .frame(width: controlWidth, height: buttonSize)
                 .contentShape(Rectangle())
         }
         .buttonStyle(WindowsTaskbarButtonStyle())

@@ -23,7 +23,10 @@ enum TaskbarLayoutPolicy {
         // from colliding with either weather or the system tray.
         let sideReservation = max(leadingRegionWidth, trailingRegionWidth)
             + horizontalPadding
-        let centeredWidth = max(0, screenWidth - (sideReservation * 2))
+        let centeredWidth = max(
+            0,
+            screenWidth - (sideReservation * 2) - TaskbarTheme.navigationAppSeparation
+        )
         let totalSlots = max(0, Int(centeredWidth / itemStride))
         let appSlotsWithoutOverflow = max(0, totalSlots - controlCount)
 

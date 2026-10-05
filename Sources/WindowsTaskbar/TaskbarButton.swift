@@ -123,18 +123,21 @@ struct TaskbarAppButton: View {
             buttonSize: buttonSize,
             action: action
         ) {
-            ZStack(alignment: .bottom) {
+            VStack(spacing: 1) {
                 Image(nsImage: app.icon)
                     .resizable()
                     .interpolation(.high)
                     .scaledToFit()
                     .frame(width: iconSize, height: iconSize)
-                    .padding(.bottom, 5)
 
-                if isRunning {
-                    HStack(spacing: 2) {
+                HStack(spacing: 2) {
+                    if isRunning {
                         Capsule()
-                            .fill(isActive ? TaskbarTheme.activeIndicator : TaskbarTheme.runningIndicator)
+                            .fill(
+                                isActive
+                                    ? TaskbarTheme.activeIndicator
+                                    : TaskbarTheme.runningIndicator
+                            )
                             .frame(width: isActive ? 16 : 6, height: 3)
                         if windowCount > 1 {
                             Capsule()
@@ -142,10 +145,11 @@ struct TaskbarAppButton: View {
                                 .frame(width: 6, height: 3)
                         }
                     }
-                    .padding(.bottom, 1)
-                    .animation(.easeOut(duration: 0.16), value: isActive)
                 }
+                .frame(height: 4)
+                .animation(.easeOut(duration: 0.16), value: isActive)
             }
+            .frame(width: buttonSize, height: buttonSize, alignment: .center)
         }
         .help(app.displayName)
     }

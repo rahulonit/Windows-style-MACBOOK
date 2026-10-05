@@ -8,6 +8,8 @@ enum TaskbarTheme {
     static let horizontalPadding: CGFloat = 8
     static let flyoutCornerRadius: CGFloat = 8
     static let systemTrayIconSize: CGFloat = 20
+    static let traySpacing: CGFloat = 3
+    static let navigationAppSeparation: CGFloat = 8
 
     static let hoverBackground = Color.white.opacity(0.10)
     static let pressedBackground = Color.white.opacity(0.06)
@@ -37,5 +39,9 @@ enum TaskbarTheme {
 
     static func trayIconSize(for appIconSize: CGFloat) -> CGFloat {
         min(30, max(16, appIconSize * 0.58))
+    }
+
+    static func trayControlWidth(for buttonSize: CGFloat) -> CGFloat {
+        min(44, max(30, buttonSize * 0.68))
     }
 }

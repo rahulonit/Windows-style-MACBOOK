@@ -7,6 +7,7 @@ final class TaskbarCoordinator {
     private let state: TaskbarState
     private var panelsByScreenNumber: [NSNumber: TaskbarPanel] = [:]
     private var flyoutPanel: TaskbarPanel?
+    private var flyoutAnchorPoint: CGPoint?
     private var flyoutCancellable: AnyCancellable?
     private var flyoutContentCancellable: AnyCancellable?
     private var displayPreferenceCancellable: AnyCancellable?
@@ -35,6 +36,17 @@ final class TaskbarCoordinator {
             from: 0,
             to: previousTaskbarHeight,
             on: visibleTaskbarDisplayIDs
+        )
+        state.windowManagerService.start(
+            taskbarHeight: { [weak self] in
+                self?.currentTaskbarHeight ?? 0
+            },
+            taskbarDisplayIDs: { [weak self] in
+                self?.visibleTaskbarDisplayIDs ?? []
+            },
+            fullScreenDisplayIDs: { [weak self] in
+                self?.fullScreenDisplayIDs ?? []
+            }
         )
         flyoutCancellable = state.$activeFlyout
             .dropFirst()
@@ -124,6 +136,7 @@ final class TaskbarCoordinator {
     }
 
     func stop() {
+        state.windowManagerService.stop()
         observers.forEach(NotificationCenter.default.removeObserver)
         observers.removeAll()
         workspaceObservers.forEach(NSWorkspace.shared.notificationCenter.removeObserver)
@@ -192,7 +205,7 @@ final class TaskbarCoordinator {
               let screen = flyoutPanel.screen ?? NSScreen.main
         else { return }
         var frame = flyoutPanel.frame
-        frame.origin.y = screen.frame.minY + TaskbarTheme.height(for: iconSize) + 8
+        frame.origin.y = flyoutOriginY(for: screen)
         flyoutPanel.setFrame(frame, display: true)
         resizeActiveFlyoutToFitContent()
     }
@@ -240,7 +253,14 @@ final class TaskbarCoordinator {
         }).subtracting(fullScreenDisplayIDs)
     }
 
+    private var currentTaskbarHeight: CGFloat {
+        TaskbarTheme.height(
+            for: CGFloat(state.preferencesService.taskbarIconSize)
+        )
+    }
+
     private func enforceAvailableWindowArea() {
+        guard !state.windowManagerService.isDraggingWindow else { return }
         let height = TaskbarTheme.height(
             for: CGFloat(state.preferencesService.taskbarIconSize)
         )
@@ -310,17 +330,16 @@ final class TaskbarCoordinator {
     private func updateFlyout(_ flyout: TaskbarFlyout?) {
         guard let flyout else {
             flyoutPanel?.orderOut(nil)
+            flyoutAnchorPoint = nil
             return
         }
 
         let mouseLocation = NSEvent.mouseLocation
+        flyoutAnchorPoint = mouseLocation
         let screen = NSScreen.screens.first(where: { NSMouseInRect(mouseLocation, $0.frame, false) })
             ?? NSScreen.main
             ?? NSScreen.screens[0]
-        let taskbarHeight = TaskbarTheme.height(
-            for: CGFloat(state.preferencesService.taskbarIconSize)
-        )
-        let originY = screen.frame.minY + taskbarHeight + 8
+        let originY = flyoutOriginY(for: screen)
         let availableSize = CGSize(
             width: max(280, screen.frame.width - 16),
             height: max(160, screen.visibleFrame.maxY - originY - 8)
@@ -329,8 +348,8 @@ final class TaskbarCoordinator {
             for: flyout,
             context: flyoutLayoutContext(availableSize: availableSize)
         )
-        let minimumX = screen.frame.minX + 8
-        let maximumX = screen.frame.maxX - size.width - 8
+        let minimumX = screen.frame.minX + 12
+        let maximumX = screen.frame.maxX - size.width - 12
         let desiredX = flyout == .start
             ? screen.frame.midX - size.width / 2
             : mouseLocation.x - size.width / 2
@@ -364,7 +383,7 @@ final class TaskbarCoordinator {
             overflowAppCount: state.overflowApps.count,
             previewWindowCount: state.previewWindows.count,
             networkCount: state.networkService.availableNetworks.count,
-            hasConnectedNetwork: state.networkService.networkName != nil,
+            hasConnectedNetwork: state.networkService.isConnected,
             networkIsPowered: state.networkService.isPowered,
             networkIsAuthorized: state.networkService.permissionState == .authorized,
             hasPendingNetwork: state.networkService.pendingNetwork != nil,
@@ -385,10 +404,7 @@ final class TaskbarCoordinator {
               let screen = panel.screen ?? NSScreen.main
         else { return }
 
-        let taskbarHeight = TaskbarTheme.height(
-            for: CGFloat(state.preferencesService.taskbarIconSize)
-        )
-        let originY = screen.frame.minY + taskbarHeight + 8
+        let originY = flyoutOriginY(for: screen)
         let availableSize = CGSize(
             width: max(280, screen.frame.width - 16),
             height: max(160, screen.visibleFrame.maxY - originY - 8)
@@ -397,11 +413,11 @@ final class TaskbarCoordinator {
             for: flyout,
             context: flyoutLayoutContext(availableSize: availableSize)
         )
-        let previousMidX = panel.frame.midX
-        let minimumX = screen.frame.minX + 8
-        let maximumX = screen.frame.maxX - size.width - 8
+        let anchorX = flyoutAnchorPoint?.x ?? panel.frame.midX
+        let minimumX = screen.frame.minX + 12
+        let maximumX = screen.frame.maxX - size.width - 12
         let originX = min(
-            max(previousMidX - size.width / 2, minimumX),
+            max(anchorX - size.width / 2, minimumX),
             maximumX
         )
         panel.setFrame(
@@ -429,6 +445,14 @@ final class TaskbarCoordinator {
             self?.state.dismissFlyout()
         }
         return panel
+    }
+
+    private func flyoutOriginY(for screen: NSScreen) -> CGFloat {
+        if let screenNumber = screen.screenNumber,
+           let taskbarPanel = panelsByScreenNumber[screenNumber] {
+            return taskbarPanel.frame.maxY + 8
+        }
+        return screen.frame.minY + currentTaskbarHeight + 8
     }
 
     private func installDismissalMonitors() {

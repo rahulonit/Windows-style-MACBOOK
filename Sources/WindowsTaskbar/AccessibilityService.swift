@@ -4,10 +4,24 @@ import Combine
 
 struct AccessibilityWindow: Identifiable {
     let id: Int
+    let processIdentifier: pid_t
     let title: String
     let isMinimized: Bool
     let isFocused: Bool
-    fileprivate let element: AXUIElement
+    let element: AXUIElement
+
+    var identity: WindowIdentity {
+        WindowIdentity(processIdentifier: processIdentifier, elementIdentifier: id)
+    }
+}
+
+enum WindowOperationResult: Equatable {
+    case success
+    case accessibilityUnavailable
+    case windowNotResizable
+    case windowNotMovable
+    case applicationRejectedFrame
+    case windowClosed
 }
 
 @MainActor
@@ -39,22 +53,131 @@ final class AccessibilityService: ObservableObject {
             return []
         }
 
-        return elements.compactMap { element in
-            let role: String? = attribute(kAXRoleAttribute, from: element)
-            guard role == kAXWindowRole as String else { return nil }
-            let title: String = attribute(kAXTitleAttribute, from: element) ?? "Untitled Window"
-            let minimized: Bool = attribute(kAXMinimizedAttribute, from: element) ?? false
-            let focused: Bool = attribute(kAXFocusedAttribute, from: element)
-                ?? attribute(kAXMainAttribute, from: element)
-                ?? false
-            return AccessibilityWindow(
-                id: Int(truncatingIfNeeded: CFHash(element)),
-                title: title.isEmpty ? "Untitled Window" : title,
-                isMinimized: minimized,
-                isFocused: focused,
-                element: element
-            )
+        return elements.compactMap {
+            windowDescriptor(for: $0, processIdentifier: application.processIdentifier)
         }
+    }
+
+    func focusedWindow() -> AccessibilityWindow? {
+        refreshAuthorization()
+        guard isTrusted,
+              let application = NSWorkspace.shared.frontmostApplication,
+              application.activationPolicy == .regular
+        else { return nil }
+        return focusedWindow(for: application)
+    }
+
+    func focusedWindow(for application: NSRunningApplication) -> AccessibilityWindow? {
+        guard isTrusted else { return nil }
+        let applicationElement = AXUIElementCreateApplication(application.processIdentifier)
+        if let element: AXUIElement = attribute(
+            kAXFocusedWindowAttribute,
+            from: applicationElement
+        ), let descriptor = windowDescriptor(
+            for: element,
+            processIdentifier: application.processIdentifier
+        ) {
+            return descriptor
+        }
+        return windows(for: application).first(where: { !$0.isMinimized })
+    }
+
+    func window(atQuartzPoint point: CGPoint) -> AccessibilityWindow? {
+        refreshAuthorization()
+        guard isTrusted else { return nil }
+        var candidate: AXUIElement?
+        let systemWide = AXUIElementCreateSystemWide()
+        guard AXUIElementCopyElementAtPosition(
+            systemWide,
+            Float(point.x),
+            Float(point.y),
+            &candidate
+        ) == .success, var element = candidate else { return nil }
+
+        for _ in 0..<8 {
+            let role: String? = attribute(kAXRoleAttribute, from: element)
+            if role == kAXWindowRole as String {
+                var processIdentifier: pid_t = 0
+                AXUIElementGetPid(element, &processIdentifier)
+                return windowDescriptor(
+                    for: element,
+                    processIdentifier: processIdentifier
+                )
+            }
+            guard let parent: AXUIElement = attribute(kAXParentAttribute, from: element)
+            else { return nil }
+            element = parent
+        }
+        return nil
+    }
+
+    func frame(of window: AccessibilityWindow) -> CGRect? {
+        guard let position = pointAttribute(kAXPositionAttribute, from: window.element),
+              let size = sizeAttribute(kAXSizeAttribute, from: window.element)
+        else { return nil }
+        return CGRect(origin: position, size: size)
+    }
+
+    func zoomButtonFrame(of window: AccessibilityWindow) -> CGRect? {
+        guard let button: AXUIElement = attribute(
+            kAXZoomButtonAttribute,
+            from: window.element
+        ), let position = pointAttribute(kAXPositionAttribute, from: button),
+           let size = sizeAttribute(kAXSizeAttribute, from: button)
+        else { return nil }
+        return CGRect(origin: position, size: size)
+    }
+
+    func isMovable(_ window: AccessibilityWindow) -> Bool {
+        isAttributeSettable(kAXPositionAttribute, on: window.element)
+    }
+
+    func isResizable(_ window: AccessibilityWindow) -> Bool {
+        isAttributeSettable(kAXSizeAttribute, on: window.element)
+    }
+
+    func setFrame(
+        _ requestedFrame: CGRect,
+        for window: AccessibilityWindow
+    ) -> WindowOperationResult {
+        refreshAuthorization()
+        guard isTrusted else { return .accessibilityUnavailable }
+        guard frame(of: window) != nil else { return .windowClosed }
+        guard isMovable(window) else { return .windowNotMovable }
+        guard isResizable(window) else { return .windowNotResizable }
+
+        var position = requestedFrame.origin
+        var size = requestedFrame.size
+        guard let positionValue = AXValueCreate(.cgPoint, &position),
+              let sizeValue = AXValueCreate(.cgSize, &size)
+        else { return .applicationRejectedFrame }
+
+        let positionResult = AXUIElementSetAttributeValue(
+            window.element,
+            kAXPositionAttribute as CFString,
+            positionValue
+        )
+        let sizeResult = AXUIElementSetAttributeValue(
+            window.element,
+            kAXSizeAttribute as CFString,
+            sizeValue
+        )
+        // A size constraint can shift a window, so re-apply its position.
+        AXUIElementSetAttributeValue(
+            window.element,
+            kAXPositionAttribute as CFString,
+            positionValue
+        )
+        guard positionResult == .success, sizeResult == .success,
+              let resultingFrame = frame(of: window),
+              framesApproximatelyEqual(resultingFrame, requestedFrame)
+        else { return .applicationRejectedFrame }
+        return .success
+    }
+
+    func isFullScreen(_ window: AccessibilityWindow) -> Bool {
+        let fullScreen: Bool = attribute("AXFullScreen", from: window.element) ?? false
+        return fullScreen
     }
 
     func toggle(_ window: AccessibilityWindow, application: NSRunningApplication) {
@@ -201,6 +324,48 @@ final class AccessibilityService: ObservableObject {
             kAXMinimizedAttribute as CFString,
             minimized ? kCFBooleanTrue : kCFBooleanFalse
         )
+    }
+
+    private func windowDescriptor(
+        for element: AXUIElement,
+        processIdentifier: pid_t
+    ) -> AccessibilityWindow? {
+        let role: String? = attribute(kAXRoleAttribute, from: element)
+        guard role == kAXWindowRole as String else { return nil }
+        let subrole: String? = attribute(kAXSubroleAttribute, from: element)
+        guard subrole == nil || subrole == kAXStandardWindowSubrole as String
+                || subrole == kAXDialogSubrole as String
+        else { return nil }
+        let title: String = attribute(kAXTitleAttribute, from: element) ?? "Untitled Window"
+        let minimized: Bool = attribute(kAXMinimizedAttribute, from: element) ?? false
+        let focused: Bool = attribute(kAXFocusedAttribute, from: element)
+            ?? attribute(kAXMainAttribute, from: element)
+            ?? false
+        return AccessibilityWindow(
+            id: Int(truncatingIfNeeded: CFHash(element)),
+            processIdentifier: processIdentifier,
+            title: title.isEmpty ? "Untitled Window" : title,
+            isMinimized: minimized,
+            isFocused: focused,
+            element: element
+        )
+    }
+
+    private func isAttributeSettable(_ name: String, on element: AXUIElement) -> Bool {
+        var settable = DarwinBoolean(false)
+        guard AXUIElementIsAttributeSettable(
+            element,
+            name as CFString,
+            &settable
+        ) == .success else { return false }
+        return settable.boolValue
+    }
+
+    private func framesApproximatelyEqual(_ lhs: CGRect, _ rhs: CGRect) -> Bool {
+        abs(lhs.minX - rhs.minX) <= 3
+            && abs(lhs.minY - rhs.minY) <= 3
+            && abs(lhs.width - rhs.width) <= 4
+            && abs(lhs.height - rhs.height) <= 4
     }
 
     private func attribute<T>(_ name: String, from element: AXUIElement) -> T? {

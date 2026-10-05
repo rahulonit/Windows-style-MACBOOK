@@ -4,6 +4,7 @@ struct NotificationTrayButton: View {
     @ObservedObject var service: TaskbarNotificationService
     let iconSize: CGFloat
     let controlHeight: CGFloat
+    let controlWidth: CGFloat
     let action: () -> Void
 
     private var unreadCount: Int { service.unreadCount }
@@ -13,7 +14,7 @@ struct NotificationTrayButton: View {
             ZStack(alignment: .topTrailing) {
                 Image(systemName: unreadCount > 0 ? "bell.fill" : "bell")
                     .font(.system(size: iconSize))
-                    .frame(width: max(22, iconSize + 6), height: controlHeight)
+                    .frame(width: controlWidth, height: controlHeight)
                 if unreadCount > 0 {
                     Text(unreadCount > 9 ? "9+" : "\(unreadCount)")
                         .font(.system(size: 7, weight: .bold))
@@ -21,7 +22,8 @@ struct NotificationTrayButton: View {
                         .frame(minWidth: 12, minHeight: 12)
                         .background(Color.red)
                         .clipShape(Circle())
-                        .offset(x: 3, y: 4)
+                        .padding(.top, 4)
+                        .padding(.trailing, 3)
                 }
             }
             .contentShape(Rectangle())
@@ -36,13 +38,14 @@ struct NetworkTrayButton: View {
     @ObservedObject var service: NetworkService
     let iconSize: CGFloat
     let controlHeight: CGFloat
+    let controlWidth: CGFloat
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
             Image(systemName: service.isPowered ? "wifi" : "wifi.slash")
                 .font(.system(size: iconSize))
-                .frame(width: max(20, iconSize + 6), height: controlHeight)
+                .frame(width: controlWidth, height: controlHeight)
                 .contentShape(Rectangle())
         }
         .buttonStyle(WindowsTaskbarButtonStyle())
@@ -55,13 +58,14 @@ struct AudioTrayButton: View {
     @ObservedObject var service: AudioService
     let iconSize: CGFloat
     let controlHeight: CGFloat
+    let controlWidth: CGFloat
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
             Image(systemName: symbolName)
                 .font(.system(size: iconSize))
-                .frame(width: max(20, iconSize + 6), height: controlHeight)
+                .frame(width: controlWidth, height: controlHeight)
                 .contentShape(Rectangle())
         }
         .buttonStyle(WindowsTaskbarButtonStyle())
@@ -84,6 +88,7 @@ struct BatteryTrayButton: View {
     @ObservedObject var service: BatteryService
     let iconSize: CGFloat
     let controlHeight: CGFloat
+    let controlWidth: CGFloat
     let action: () -> Void
 
     var body: some View {
@@ -97,7 +102,7 @@ struct BatteryTrayButton: View {
                     .monospacedDigit()
                     .foregroundStyle(service.isLowBattery ? .red : .primary)
             }
-            .frame(height: controlHeight)
+            .frame(width: controlWidth, height: controlHeight)
             .contentShape(Rectangle())
         }
         .buttonStyle(WindowsTaskbarButtonStyle())

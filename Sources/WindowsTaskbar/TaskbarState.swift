@@ -34,6 +34,10 @@ final class TaskbarState: ObservableObject {
     let bluetoothService = BluetoothService()
     let appearanceService = AppearanceService()
     let preferencesService: PreferencesService
+    lazy var windowManagerService = WindowManagerService(
+        accessibility: accessibilityService,
+        preferences: preferencesService
+    )
     lazy var notificationService = TaskbarNotificationService(
         networkService: networkService,
         batteryService: batteryService,
@@ -336,6 +340,39 @@ final class TaskbarState: ObservableObject {
         workspace.runningApplications
             .filter { $0.bundleIdentifier == app.bundleIdentifier }
             .forEach { $0.terminate() }
+    }
+
+    func snap(_ app: AppDescriptor, to zone: SnapZone) {
+        accessibilityService.refreshAuthorization()
+        guard accessibilityService.isTrusted else {
+            activeFlyout = .accessibility
+            return
+        }
+        guard let application = runningApplication(for: app) else { return }
+        activeFlyout = nil
+        _ = windowManagerService.snap(application: application, to: zone)
+    }
+
+    func restoreWindow(for app: AppDescriptor) {
+        accessibilityService.refreshAuthorization()
+        guard accessibilityService.isTrusted else {
+            activeFlyout = .accessibility
+            return
+        }
+        guard let application = runningApplication(for: app) else { return }
+        activeFlyout = nil
+        _ = windowManagerService.restore(application: application)
+    }
+
+    func minimizeWindow(for app: AppDescriptor) {
+        accessibilityService.refreshAuthorization()
+        guard accessibilityService.isTrusted else {
+            activeFlyout = .accessibility
+            return
+        }
+        guard let application = runningApplication(for: app) else { return }
+        activeFlyout = nil
+        windowManagerService.minimize(application: application)
     }
 
     func showWindows(for app: AppDescriptor) {

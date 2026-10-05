@@ -69,7 +69,7 @@ enum FlyoutLayoutPolicy {
             )
             proposed = CGSize(width: 450, height: 335 + notificationArea)
         case .settings:
-            proposed = CGSize(width: 480, height: 440)
+            proposed = CGSize(width: 500, height: 620)
         case .onboarding:
             proposed = CGSize(width: 560, height: 520)
         }
@@ -86,11 +86,11 @@ enum FlyoutLayoutPolicy {
         if !context.networkIsAuthorized { return 210 }
 
         let rows: CGFloat = context.networkCount == 0
-            ? 54
+            ? 38
             : min(6, CGFloat(context.networkCount)) * 48
         let connected: CGFloat = context.hasConnectedNetwork ? 64 : 0
         let error: CGFloat = context.hasNetworkError ? 24 : 0
-        return min(470, max(220, 116 + rows + connected + error))
+        return min(470, max(205, 108 + rows + connected + error))
     }
 
     private static func bluetoothHeight(_ context: FlyoutLayoutContext) -> CGFloat {

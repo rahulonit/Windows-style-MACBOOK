@@ -26,6 +26,15 @@ func taskbarIconSizeIsClamped() {
         PreferencesService.clampTaskbarIconSize(.nan)
             == PreferencesService.defaultTaskbarIconSize
     )
+    #expect(
+        PreferencesService.clampNavigationIconSize(2)
+            == PreferencesService.minimumNavigationIconSize
+    )
+    #expect(PreferencesService.clampNavigationIconSize(16) == 16)
+    #expect(
+        PreferencesService.clampNavigationIconSize(40)
+            == PreferencesService.maximumNavigationIconSize
+    )
 }
 
 @Test("Taskbar geometry scales proportionally with icon size")
@@ -151,7 +160,7 @@ func flyoutSizesRespondToContent() {
         )
     )
 
-    #expect(compact.height == 220)
+    #expect(compact.height == 205)
     #expect(populated.height > compact.height)
     #expect(constrained == CGSize(width: 340, height: 360))
 }
@@ -200,4 +209,88 @@ func windowFittingSelectsBestDisplay() {
         for: CGRect(x: 2_100, y: 50, width: 400, height: 400),
         among: [left, right]
     ) == nil)
+}
+
+@Test("Snap layouts fill the work area without covering the taskbar")
+func snapLayoutsUseWorkArea() {
+    let workArea = CGRect(x: 0, y: 38, width: 1_800, height: 1_067)
+    let left = SnapLayoutPolicy.frame(for: .leftHalf, in: workArea)
+    let bottomRight = SnapLayoutPolicy.frame(for: .bottomRight, in: workArea)
+    let thirds = [SnapZone.leftThird, .centerThird, .rightThird].map {
+        SnapLayoutPolicy.frame(for: $0, in: workArea)
+    }
+
+    #expect(left == CGRect(x: 0, y: 38, width: 900, height: 1_067))
+    #expect(bottomRight.maxX == workArea.maxX)
+    #expect(bottomRight.maxY == workArea.maxY)
+    #expect(thirds.first?.minX == workArea.minX)
+    #expect(thirds.last?.maxX == workArea.maxX)
+    #expect(thirds.reduce(0) { $0 + $1.width } == workArea.width)
+}
+
+@Test("Edge snapping selects halves, quarters, and maximize")
+func edgeSnapZonesAreDeterministic() {
+    let workArea = CGRect(x: 0, y: 38, width: 1_800, height: 1_067)
+
+    #expect(SnapLayoutPolicy.edgeZone(
+        at: CGPoint(x: 900, y: 40),
+        in: workArea,
+        activationDistance: 12
+    ) == .maximize)
+    #expect(SnapLayoutPolicy.edgeZone(
+        at: CGPoint(x: 2, y: 45),
+        in: workArea,
+        activationDistance: 12
+    ) == .topLeft)
+    #expect(SnapLayoutPolicy.edgeZone(
+        at: CGPoint(x: 1_798, y: 600),
+        in: workArea,
+        activationDistance: 12
+    ) == .rightHalf)
+    #expect(SnapLayoutPolicy.edgeZone(
+        at: CGPoint(x: 900, y: 600),
+        in: workArea,
+        activationDistance: 12
+    ) == nil)
+}
+
+@Test("Quartz frames convert to the correct AppKit display coordinates")
+func quartzFramesConvertToAppKit() {
+    let workArea = ScreenWorkArea(
+        displayID: 2,
+        screenFrame: CGRect(x: 1_800, y: 0, width: 1_200, height: 900),
+        displayFrame: CGRect(x: 1_800, y: 100, width: 1_200, height: 900),
+        frame: CGRect(x: 1_800, y: 130, width: 1_200, height: 810)
+    )
+    let converted = workArea.appKitRect(
+        fromQuartz: CGRect(x: 1_800, y: 130, width: 600, height: 810)
+    )
+
+    #expect(converted == CGRect(x: 1_800, y: 60, width: 600, height: 810))
+}
+
+@Test("Window-management preferences persist and reset")
+@MainActor
+func windowManagementPreferencesPersist() {
+    let suiteName = "WindowsTaskbarTests.\(UUID().uuidString)"
+    let defaults = UserDefaults(suiteName: suiteName)!
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+
+    let preferences = PreferencesService(defaults: defaults)
+    preferences.edgeSnappingEnabled = false
+    preferences.snapActivationDistance = 100
+    preferences.navigationIconSize = 19.5
+    #expect(preferences.snapActivationDistance == 32)
+
+    let reloaded = PreferencesService(defaults: defaults)
+    #expect(!reloaded.edgeSnappingEnabled)
+    #expect(reloaded.snapActivationDistance == 32)
+    #expect(reloaded.navigationIconSize == 19.5)
+
+    reloaded.resetWindowManagementSettings()
+    #expect(reloaded.windowManagementEnabled)
+    #expect(reloaded.edgeSnappingEnabled)
+    #expect(reloaded.snapLayoutsEnabled)
+    #expect(reloaded.keyboardSnappingEnabled)
+    #expect(reloaded.snapActivationDistance == 12)
 }
