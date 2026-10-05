@@ -165,13 +165,14 @@ final class TaskbarNotificationService: ObservableObject {
             date: now
         )
 
-        if shouldCoalesce(category),
-           let duplicateIndex = notifications.firstIndex(where: {
-               $0.title == title
-                   && $0.message == message
-                   && $0.category == category
-                   && now.timeIntervalSince($0.date) <= duplicateSuppressionInterval
-           }) {
+        if let duplicateIndex = Self.coalescingIndex(
+            in: notifications,
+            title: title,
+            message: message,
+            category: category,
+            now: now,
+            interval: duplicateSuppressionInterval
+        ) {
             // Refresh the existing event's timestamp and position without
             // increasing its unread count or filling the panel with duplicates.
             notifications.remove(at: duplicateIndex)
@@ -186,12 +187,24 @@ final class TaskbarNotificationService: ObservableObject {
         if unread { unreadCount += 1 }
     }
 
-    private func shouldCoalesce(_ category: TaskbarNotification.Category) -> Bool {
+    static func coalescingIndex(
+        in notifications: [TaskbarNotification],
+        title: String,
+        message: String,
+        category: TaskbarNotification.Category,
+        now: Date,
+        interval: TimeInterval
+    ) -> Int? {
         switch category {
-        case .network, .battery, .bluetooth, .system:
-            return true
         case .application:
-            return false
+            return nil
+        case .network, .battery, .bluetooth, .system:
+            return notifications.firstIndex {
+                $0.title == title
+                    && $0.message == message
+                    && $0.category == category
+                    && now.timeIntervalSince($0.date) <= interval
+            }
         }
     }
 }

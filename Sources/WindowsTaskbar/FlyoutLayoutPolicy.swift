@@ -85,11 +85,11 @@ enum FlyoutLayoutPolicy {
         if !context.networkIsPowered { return 190 }
         if !context.networkIsAuthorized { return 300 }
 
-        let rows = context.networkCount == 0
+        let rows: CGFloat = context.networkCount == 0
             ? 54
             : min(6, CGFloat(context.networkCount)) * 48
-        let connected = context.hasConnectedNetwork ? 64 : 0
-        let error = context.hasNetworkError ? 24 : 0
+        let connected: CGFloat = context.hasConnectedNetwork ? 64 : 0
+        let error: CGFloat = context.hasNetworkError ? 24 : 0
         return min(470, max(220, 116 + rows + connected + error))
     }
 
@@ -97,10 +97,10 @@ enum FlyoutLayoutPolicy {
         if context.hasPairingConfirmation { return 310 }
         if !context.bluetoothIsPowered { return 210 }
 
-        let rows = context.bluetoothDeviceCount == 0
+        let rows: CGFloat = context.bluetoothDeviceCount == 0
             ? 80
             : min(5, CGFloat(context.bluetoothDeviceCount)) * 58
-        let error = context.hasBluetoothError ? 28 : 0
+        let error: CGFloat = context.hasBluetoothError ? 28 : 0
         return min(470, max(260, 150 + rows + error))
     }
 }
