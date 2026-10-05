@@ -46,7 +46,7 @@ struct NetworkTrayButton: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(WindowsTaskbarButtonStyle())
-        .help(service.networkName ?? (service.isPowered ? "Wi-Fi" : "Wi-Fi off"))
+        .help(service.statusText)
         .accessibilityLabel("Wi-Fi controls")
     }
 }

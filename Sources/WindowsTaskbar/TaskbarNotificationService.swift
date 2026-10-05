@@ -1,6 +1,11 @@
 import Combine
 import Foundation
 
+private struct WiFiConnectionSnapshot: Equatable {
+    let isConnected: Bool
+    let networkName: String?
+}
+
 struct TaskbarNotification: Identifiable, Equatable {
     enum Category {
         case network
@@ -57,14 +62,19 @@ final class TaskbarNotificationService: ObservableObject {
             unread: false
         )
 
-        networkService.$networkName
+        Publishers.CombineLatest(
+            networkService.$isConnected,
+            networkService.$networkName
+        )
             .dropFirst()
+            .map(WiFiConnectionSnapshot.init)
             .removeDuplicates()
-            .sink { [weak self] networkName in
-                if let networkName {
+            .debounce(for: .milliseconds(250), scheduler: RunLoop.main)
+            .sink { [weak self] snapshot in
+                if snapshot.isConnected {
                     self?.post(
                         title: "Wi-Fi connected",
-                        message: networkName,
+                        message: snapshot.networkName ?? "Connected network",
                         symbolName: "wifi",
                         category: .network
                     )

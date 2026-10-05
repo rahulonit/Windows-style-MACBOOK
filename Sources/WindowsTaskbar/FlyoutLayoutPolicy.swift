@@ -83,7 +83,7 @@ enum FlyoutLayoutPolicy {
     private static func networkHeight(_ context: FlyoutLayoutContext) -> CGFloat {
         if context.hasPendingNetwork { return 320 }
         if !context.networkIsPowered { return 190 }
-        if !context.networkIsAuthorized { return 300 }
+        if !context.networkIsAuthorized { return 210 }
 
         let rows: CGFloat = context.networkCount == 0
             ? 54

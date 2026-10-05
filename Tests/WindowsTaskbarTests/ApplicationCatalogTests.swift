@@ -185,3 +185,19 @@ func repeatedNotificationsAreCoalesced() {
         interval: 300
     ) == nil)
 }
+
+@Test("Window fitting selects the display containing most of the window")
+@MainActor
+func windowFittingSelectsBestDisplay() {
+    let left = CGRect(x: 0, y: 0, width: 1_000, height: 700)
+    let right = CGRect(x: 1_000, y: 0, width: 1_000, height: 700)
+
+    #expect(AccessibilityService.bestDisplayFrame(
+        for: CGRect(x: 850, y: 50, width: 700, height: 500),
+        among: [left, right]
+    ) == right)
+    #expect(AccessibilityService.bestDisplayFrame(
+        for: CGRect(x: 2_100, y: 50, width: 400, height: 400),
+        among: [left, right]
+    ) == nil)
+}

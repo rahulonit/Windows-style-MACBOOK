@@ -98,10 +98,10 @@ final class AccessibilityService: ObservableObject {
         refreshAuthorization()
         guard isTrusted else { return }
 
-        let displayFrames = NSScreen.screens.compactMap { screen -> CGRect? in
+        let displayFrames = NSScreen.screens.compactMap { screen -> (CGDirectDisplayID, CGRect)? in
             guard let id = screen.displayID else { return nil }
             if let displayIDs, !displayIDs.contains(id) { return nil }
-            return CGDisplayBounds(id)
+            return (id, CGDisplayBounds(id))
         }
 
         for application in NSWorkspace.shared.runningApplications
@@ -119,12 +119,16 @@ final class AccessibilityService: ObservableObject {
                       subrole == kAXStandardWindowSubrole as String,
                       let position = pointAttribute(kAXPositionAttribute, from: window),
                       let size = sizeAttribute(kAXSizeAttribute, from: window),
-                      let screen = displayFrames.first(where: {
-                          $0.contains(CGPoint(x: position.x + 2, y: position.y + 2))
-                      })
+                      let screen = Self.bestDisplayFrame(
+                        for: CGRect(origin: position, size: size),
+                        among: displayFrames.map(\.1)
+                      )
                 else { continue }
 
-                let isFullScreen = abs(position.x - screen.minX) <= 2
+                let accessibilityFullScreen: Bool = attribute("AXFullScreen", from: window)
+                    ?? false
+                let isFullScreen = accessibilityFullScreen
+                    || abs(position.x - screen.minX) <= 2
                     && abs(position.y - screen.minY) <= 2
                     && abs(size.width - screen.width) <= 3
                     && abs(size.height - screen.height) <= 3
@@ -142,13 +146,53 @@ final class AccessibilityService: ObservableObject {
                 let availableHeight = max(180, newAllowedBottom - position.y)
                 var newSize = CGSize(width: size.width, height: availableHeight)
                 guard let sizeValue = AXValueCreate(.cgSize, &newSize) else { continue }
-                AXUIElementSetAttributeValue(
+                let sizeResult = AXUIElementSetAttributeValue(
                     window,
                     kAXSizeAttribute as CFString,
                     sizeValue
                 )
+
+                // Some applications constrain or ignore direct size changes.
+                // Re-read their frame and move any remaining overlap above the
+                // taskbar while keeping the title bar on its display.
+                let adjustedPosition = pointAttribute(kAXPositionAttribute, from: window)
+                    ?? position
+                let adjustedSize = sizeAttribute(kAXSizeAttribute, from: window)
+                    ?? (sizeResult == .success ? newSize : size)
+                let remainingOverlap = adjustedPosition.y
+                    + adjustedSize.height
+                    - newAllowedBottom
+                if remainingOverlap > 1 {
+                    var newPosition = CGPoint(
+                        x: adjustedPosition.x,
+                        y: max(screen.minY, adjustedPosition.y - remainingOverlap)
+                    )
+                    if let positionValue = AXValueCreate(.cgPoint, &newPosition) {
+                        AXUIElementSetAttributeValue(
+                            window,
+                            kAXPositionAttribute as CFString,
+                            positionValue
+                        )
+                    }
+                }
             }
         }
+    }
+
+    static func bestDisplayFrame(
+        for windowFrame: CGRect,
+        among displayFrames: [CGRect]
+    ) -> CGRect? {
+        guard let bestMatch = displayFrames.max(by: { lhs, rhs in
+            intersectionArea(windowFrame, lhs) < intersectionArea(windowFrame, rhs)
+        }) else { return nil }
+        return intersectionArea(windowFrame, bestMatch) > 0 ? bestMatch : nil
+    }
+
+    private static func intersectionArea(_ lhs: CGRect, _ rhs: CGRect) -> CGFloat {
+        let intersection = lhs.intersection(rhs)
+        guard !intersection.isNull else { return 0 }
+        return intersection.width * intersection.height
     }
 
     private func setMinimized(_ minimized: Bool, for window: AccessibilityWindow) {

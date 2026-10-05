@@ -12,6 +12,14 @@ enum WiFiPermissionState: Equatable {
     case restricted
 }
 
+enum WiFiScanState: Equatable {
+    case idle
+    case scanning
+    case results
+    case empty
+    case failed(String)
+}
+
 private final class LocationAuthorizationDelegate: NSObject, CLLocationManagerDelegate {
     var onChange: ((CLAuthorizationStatus) -> Void)?
 
@@ -45,9 +53,12 @@ final class NetworkService: NSObject, ObservableObject {
 
     @Published private(set) var permissionState: WiFiPermissionState = .notDetermined
     @Published private(set) var isPowered = false
+    @Published private(set) var isConnected = false
     @Published private(set) var networkName: String?
     @Published private(set) var availableNetworks: [AvailableNetwork] = []
     @Published private(set) var isScanning = false
+    @Published private(set) var scanState: WiFiScanState = .idle
+    @Published private(set) var lastScanDate: Date?
     @Published private(set) var connectingNetworkName: String?
     @Published private(set) var pendingNetwork: AvailableNetwork?
     @Published var password = ""
@@ -58,6 +69,8 @@ final class NetworkService: NSObject, ObservableObject {
     private let authorizationDelegate = LocationAuthorizationDelegate()
     private let eventDelegate = WiFiEventDelegate()
     private var scannedNetworksByName: [String: CWNetwork] = [:]
+    private var scanGeneration = 0
+    private var permissionRequestWorkItem: DispatchWorkItem?
 
     override init() {
         super.init()
@@ -67,6 +80,7 @@ final class NetworkService: NSObject, ObservableObject {
             }
         }
         locationManager.delegate = authorizationDelegate
+        locationManager.desiredAccuracy = kCLLocationAccuracyThreeKilometers
         eventDelegate.onChange = { [weak self] in
             DispatchQueue.main.async {
                 self?.refresh()
@@ -80,18 +94,31 @@ final class NetworkService: NSObject, ObservableObject {
 
     deinit {
         try? client.stopMonitoringAllEvents()
+        locationManager.stopUpdatingLocation()
+        permissionRequestWorkItem?.cancel()
+    }
+
+    var statusText: String {
+        guard isPowered else { return "Off" }
+        if let networkName { return networkName }
+        return isConnected ? "Connected" : "Not connected"
     }
 
     func refresh() {
-        guard let interface = client.interface() else {
+        guard let interface = preferredInterface() else {
             isPowered = false
+            isConnected = false
             networkName = nil
             errorMessage = "No Wi-Fi interface is available."
             return
         }
 
         isPowered = interface.powerOn()
-        networkName = interface.ssid()
+        isConnected = isPowered && interface.serviceActive()
+        networkName = isConnected ? interface.ssid() : nil
+        if isPowered, errorMessage == "No Wi-Fi interface is available." {
+            errorMessage = nil
+        }
     }
 
     func requestPermissionAndScan() {
@@ -99,10 +126,19 @@ final class NetworkService: NSObject, ObservableObject {
         switch permissionState {
         case .notDetermined:
             permissionState = .requesting
-            locationManager.requestWhenInUseAuthorization()
+            // A menu-bar-style app can own a non-activating panel. Core
+            // Location only presents its when-in-use prompt while the app is
+            // active, so briefly activate before requesting permission.
+            NSApplication.shared.activate(ignoringOtherApps: true)
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.locationManager.requestWhenInUseAuthorization()
+                self.schedulePermissionRequestTimeout()
+            }
         case .requesting:
             break
         case .authorized:
+            beginLocationSession()
             scanAuthorizedNetworks()
         case .denied, .restricted:
             errorMessage = "Location access is required to display nearby Wi-Fi network names."
@@ -110,7 +146,7 @@ final class NetworkService: NSObject, ObservableObject {
     }
 
     func setPowered(_ powered: Bool) {
-        guard let interface = client.interface() else {
+        guard let interface = preferredInterface() else {
             errorMessage = "No Wi-Fi interface is available."
             return
         }
@@ -123,6 +159,7 @@ final class NetworkService: NSObject, ObservableObject {
             } else {
                 availableNetworks = []
                 scannedNetworksByName = [:]
+                scanState = .idle
             }
         } catch {
             errorMessage = error.localizedDescription
@@ -134,8 +171,10 @@ final class NetworkService: NSObject, ObservableObject {
         refresh()
         guard isPowered else {
             availableNetworks = []
+            scanState = .idle
             return
         }
+        guard !isScanning else { return }
         requestPermissionAndScan()
     }
 
@@ -164,7 +203,7 @@ final class NetworkService: NSObject, ObservableObject {
     }
 
     func disconnect() {
-        client.interface()?.disassociate()
+        preferredInterface()?.disassociate()
         pendingNetwork = nil
         password = ""
         refresh()
@@ -179,8 +218,11 @@ final class NetworkService: NSObject, ObservableObject {
     }
 
     private func authorizationChanged(to status: CLAuthorizationStatus) {
+        permissionRequestWorkItem?.cancel()
+        permissionRequestWorkItem = nil
         updatePermissionState(status)
         if permissionState == .authorized {
+            beginLocationSession()
             scanAuthorizedNetworks()
         }
     }
@@ -215,20 +257,27 @@ final class NetworkService: NSObject, ObservableObject {
         }
     }
 
-    private func scanAuthorizedNetworks() {
+    private func scanAuthorizedNetworks(retryIfEmpty: Bool = true) {
         guard permissionState == .authorized else { return }
-        guard isPowered, let interface = client.interface() else {
+        guard isPowered, let interface = preferredInterface() else {
             availableNetworks = []
+            scanState = .idle
             return
         }
 
+        scanGeneration += 1
+        let generation = scanGeneration
         isScanning = true
+        scanState = .scanning
         errorMessage = nil
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             do {
                 let scanned = try interface.scanForNetworks(withSSID: nil)
+                let candidates = scanned.isEmpty
+                    ? (interface.cachedScanResults() ?? [])
+                    : scanned
                 var strongestByName: [String: CWNetwork] = [:]
-                for network in scanned {
+                for network in candidates {
                     guard let name = network.ssid, !name.isEmpty else { continue }
                     if network.rssiValue > (strongestByName[name]?.rssiValue ?? Int.min) {
                         strongestByName[name] = network
@@ -244,18 +293,32 @@ final class NetworkService: NSObject, ObservableObject {
                 .sorted { $0.signalStrength > $1.signalStrength }
 
                 DispatchQueue.main.async {
-                    self?.scannedNetworksByName = strongestByName
-                    self?.availableNetworks = models
-                    self?.isScanning = false
-                    self?.errorMessage = models.isEmpty ? "No nearby networks were found." : nil
-                    self?.refresh()
+                    guard let self, generation == self.scanGeneration else { return }
+                    if models.isEmpty, retryIfEmpty {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
+                            guard let self, generation == self.scanGeneration else { return }
+                            self.scanAuthorizedNetworks(retryIfEmpty: false)
+                        }
+                        return
+                    }
+                    self.scannedNetworksByName = strongestByName
+                    self.availableNetworks = models
+                    self.isScanning = false
+                    self.lastScanDate = Date()
+                    self.scanState = models.isEmpty ? .empty : .results
+                    self.locationManager.stopUpdatingLocation()
+                    self.refresh()
                 }
             } catch {
                 DispatchQueue.main.async {
-                    self?.availableNetworks = []
-                    self?.scannedNetworksByName = [:]
-                    self?.isScanning = false
-                    self?.errorMessage = error.localizedDescription
+                    guard let self, generation == self.scanGeneration else { return }
+                    self.availableNetworks = []
+                    self.scannedNetworksByName = [:]
+                    self.isScanning = false
+                    self.lastScanDate = Date()
+                    self.scanState = .failed(error.localizedDescription)
+                    self.errorMessage = error.localizedDescription
+                    self.locationManager.stopUpdatingLocation()
                 }
             }
         }
@@ -264,7 +327,7 @@ final class NetworkService: NSObject, ObservableObject {
     private func connect(to network: AvailableNetwork, password: String?) {
         guard
             connectingNetworkName == nil,
-            let interface = client.interface(),
+            let interface = preferredInterface(),
             let scannedNetwork = scannedNetworksByName[network.name]
         else { return }
 
@@ -288,5 +351,30 @@ final class NetworkService: NSObject, ObservableObject {
                 }
             }
         }
+    }
+
+    private func beginLocationSession() {
+        guard permissionState == .authorized else { return }
+        locationManager.startUpdatingLocation()
+    }
+
+    private func schedulePermissionRequestTimeout() {
+        permissionRequestWorkItem?.cancel()
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.updatePermissionState(self.locationManager.authorizationStatus)
+            if self.permissionState == .requesting {
+                self.permissionState = .notDetermined
+            }
+        }
+        permissionRequestWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4, execute: workItem)
+    }
+
+    private func preferredInterface() -> CWInterface? {
+        let interfaces = client.interfaces() ?? []
+        return interfaces.first(where: { $0.serviceActive() })
+            ?? interfaces.first(where: { $0.powerOn() })
+            ?? client.interface()
     }
 }

@@ -442,8 +442,7 @@ private struct NotificationCenterFlyout: View {
             LazyVGrid(columns: columns, spacing: 10) {
                 widgetCard(
                     title: "Wi-Fi",
-                    value: state.networkService.networkName
-                        ?? (state.networkService.isPowered ? "Not connected" : "Off"),
+                    value: state.networkService.statusText,
                     symbol: state.networkService.isPowered ? "wifi" : "wifi.slash"
                 )
                 widgetCard(
@@ -570,8 +569,7 @@ private struct QuickSettingsFlyout: View {
             LazyVGrid(columns: columns, spacing: 10) {
                 quickTile(
                     title: "Wi-Fi",
-                    detail: state.networkService.networkName
-                        ?? (state.networkService.isPowered ? "Available" : "Off"),
+                    detail: state.networkService.statusText,
                     symbol: state.networkService.isPowered ? "wifi" : "wifi.slash",
                     isActive: state.networkService.isPowered
                 ) {
@@ -1043,12 +1041,12 @@ private struct NetworkFlyout: View {
             } else if service.permissionState != .authorized {
                 permissionView
             } else {
-                if let networkName = service.networkName {
+                if service.isConnected {
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(networkName)
+                            Text(service.networkName ?? "Connected network")
                                 .font(.system(size: 14, weight: .semibold))
-                            Text("Connected")
+                            Text(service.networkName == nil ? "Name unavailable" : "Connected")
                                 .font(.caption)
                                 .foregroundStyle(TaskbarTheme.activeIndicator)
                         }
@@ -1073,58 +1071,100 @@ private struct NetworkFlyout: View {
                         Image(systemName: "arrow.clockwise")
                     }
                     .buttonStyle(.plain)
+                    .disabled(service.isScanning)
                     .help("Scan again")
                 }
 
-                ScrollView {
-                    LazyVStack(spacing: 4) {
-                        ForEach(service.availableNetworks) { network in
-                            Button {
-                                service.select(network)
-                            } label: {
-                                HStack(spacing: 10) {
-                                    Image(systemName: network.signalSymbol)
-                                        .frame(width: 20)
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(network.name)
-                                            .lineLimit(1)
-                                        if network.name == service.networkName {
-                                            Text("Connected")
+                if service.isScanning && service.availableNetworks.isEmpty {
+                    VStack(spacing: 9) {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text("Searching for networks…")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 78)
+                } else if service.scanState == .empty {
+                    VStack(spacing: 7) {
+                        Image(systemName: "wifi.exclamationmark")
+                            .font(.system(size: 22))
+                            .foregroundStyle(.secondary)
+                        Text("No networks found")
+                            .font(.system(size: 13, weight: .semibold))
+                        Text("Try scanning again or move closer to the router.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: .infinity, minHeight: 92)
+                } else if case let .failed(message) = service.scanState {
+                    VStack(spacing: 8) {
+                        Image(systemName: "exclamationmark.triangle")
+                            .font(.system(size: 20))
+                            .foregroundStyle(.orange)
+                        Text("Couldn’t scan for networks")
+                            .font(.system(size: 13, weight: .semibold))
+                        Text(message)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                        Button("Try again", action: service.scan)
+                            .buttonStyle(.bordered)
+                    }
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: .infinity, minHeight: 110)
+                } else {
+                    ScrollView {
+                        LazyVStack(spacing: 4) {
+                            ForEach(service.availableNetworks) { network in
+                                Button {
+                                    service.select(network)
+                                } label: {
+                                    HStack(spacing: 10) {
+                                        Image(systemName: network.signalSymbol)
+                                            .frame(width: 20)
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text(network.name)
+                                                .lineLimit(1)
+                                            if network.name == service.networkName {
+                                                Text("Connected")
+                                                    .font(.caption)
+                                                    .foregroundStyle(TaskbarTheme.activeIndicator)
+                                            }
+                                        }
+                                        Spacer()
+                                        if service.connectingNetworkName == network.name {
+                                            ProgressView()
+                                                .controlSize(.small)
+                                        } else if network.isSecure {
+                                            Image(systemName: "lock.fill")
                                                 .font(.caption)
-                                                .foregroundStyle(TaskbarTheme.activeIndicator)
+                                                .foregroundStyle(.secondary)
                                         }
                                     }
-                                    Spacer()
-                                    if service.connectingNetworkName == network.name {
-                                        ProgressView()
-                                            .controlSize(.small)
-                                    } else if network.isSecure {
-                                        Image(systemName: "lock.fill")
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
-                                    }
+                                    .padding(.horizontal, 10)
+                                    .frame(height: 44)
+                                    .contentShape(Rectangle())
                                 }
-                                .padding(.horizontal, 10)
-                                .frame(height: 44)
-                                .contentShape(Rectangle())
+                                .buttonStyle(.plain)
+                                .disabled(
+                                    service.connectingNetworkName != nil
+                                        || network.name == service.networkName
+                                )
+                                .background(
+                                    network.name == service.networkName
+                                        ? TaskbarTheme.hoverBackground
+                                        : Color.clear
+                                )
+                                .clipShape(RoundedRectangle(cornerRadius: 5))
                             }
-                            .buttonStyle(.plain)
-                            .disabled(
-                                service.connectingNetworkName != nil
-                                    || network.name == service.networkName
-                            )
-                            .background(
-                                network.name == service.networkName
-                                    ? TaskbarTheme.hoverBackground
-                                    : Color.clear
-                            )
-                            .clipShape(RoundedRectangle(cornerRadius: 5))
                         }
                     }
                 }
             }
 
-            if let errorMessage = service.errorMessage {
+            if let errorMessage = service.errorMessage,
+               !service.scanState.isFailure {
                 Text(errorMessage)
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -1144,10 +1184,17 @@ private struct NetworkFlyout: View {
                 Button("Allow and scan", action: service.requestPermissionAndScan)
                     .buttonStyle(.borderedProminent)
             case .requesting:
-                HStack {
-                    ProgressView()
-                        .controlSize(.small)
-                    Text("Waiting for permission…")
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text("Waiting for permission…")
+                    }
+                    Button(
+                        "Open Location Privacy Settings",
+                        action: service.openLocationPrivacySettings
+                    )
+                    .buttonStyle(.bordered)
                 }
             case .denied, .restricted:
                 Button("Open Location Privacy Settings", action: service.openLocationPrivacySettings)
@@ -1197,6 +1244,13 @@ private struct NetworkFlyout: View {
             }
             Spacer()
         }
+    }
+}
+
+private extension WiFiScanState {
+    var isFailure: Bool {
+        if case .failed = self { return true }
+        return false
     }
 }
 

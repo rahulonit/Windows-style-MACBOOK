@@ -97,6 +97,7 @@ final class TaskbarCoordinator {
         let workspaceCenter = NSWorkspace.shared.notificationCenter
         for name in [
             NSWorkspace.activeSpaceDidChangeNotification,
+            NSWorkspace.didLaunchApplicationNotification,
             NSWorkspace.didActivateApplicationNotification,
             NSWorkspace.didHideApplicationNotification,
             NSWorkspace.didUnhideApplicationNotification
@@ -107,7 +108,13 @@ final class TaskbarCoordinator {
                     object: nil,
                     queue: .main
                 ) { [weak self] _ in
-                    Task { @MainActor in self?.refreshFullScreenState() }
+                    Task { @MainActor in
+                        self?.refreshFullScreenState()
+                        if name == NSWorkspace.didLaunchApplicationNotification
+                            || name == NSWorkspace.didActivateApplicationNotification {
+                            self?.scheduleWindowAreaEnforcement()
+                        }
+                    }
                 }
             )
         }
@@ -242,6 +249,14 @@ final class TaskbarCoordinator {
             to: height,
             on: visibleTaskbarDisplayIDs
         )
+    }
+
+    private func scheduleWindowAreaEnforcement() {
+        for delay in [0.12, 0.55, 1.2] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                self?.enforceAvailableWindowArea()
+            }
+        }
     }
 
     private func setPanel(_ panel: TaskbarPanel, hidden: Bool) {

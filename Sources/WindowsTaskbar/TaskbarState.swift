@@ -107,7 +107,7 @@ final class TaskbarState: ObservableObject {
                         runningApplication.activate(options: [.activateAllWindows])
                     }
                 } else {
-                    openApplication(app)
+                    reopenApplication(runningApplication, descriptor: app)
                 }
                 return
             }
@@ -125,7 +125,7 @@ final class TaskbarState: ObservableObject {
                 if app.bundleIdentifier == Self.finderBundleIdentifier {
                     openFinderWindow(for: app)
                 } else {
-                    openApplication(app)
+                    reopenApplication(runningApplication, descriptor: app)
                 }
             }
             return
@@ -141,6 +141,51 @@ final class TaskbarState: ObservableObject {
             if let error {
                 NSLog("Unable to launch \(app.displayName): \(error.localizedDescription)")
             }
+        }
+    }
+
+    private func reopenApplication(
+        _ application: NSRunningApplication,
+        descriptor: AppDescriptor
+    ) {
+        application.unhide()
+        let target = NSAppleEventDescriptor(
+            processIdentifier: application.processIdentifier
+        )
+        let reopenEvent = NSAppleEventDescriptor(
+            eventClass: AEEventClass(kCoreEventClass),
+            eventID: AEEventID(kAEReopenApplication),
+            targetDescriptor: target,
+            returnID: AEReturnID(kAutoGenerateReturnID),
+            transactionID: AETransactionID(kAnyTransactionID)
+        )
+        reopenEvent.setParam(
+            NSAppleEventDescriptor(boolean: true),
+            forKeyword: AEKeyword(kAEApplicationActivationExpected)
+        )
+
+        // Route the reopen event through Launch Services. Sending Apple events
+        // directly would make macOS request Automation access separately for
+        // every application controlled by the taskbar.
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = true
+        configuration.appleEvent = reopenEvent
+        workspace.openApplication(
+            at: descriptor.applicationURL,
+            configuration: configuration
+        ) { [weak self] _, error in
+            Task { @MainActor in
+                if let error {
+                    NSLog(
+                        "Unable to reopen \(descriptor.displayName): \(error.localizedDescription)"
+                    )
+                    self?.openApplication(descriptor)
+                }
+            }
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+            self?.refreshWindowInformation(for: descriptor)
         }
     }
 
