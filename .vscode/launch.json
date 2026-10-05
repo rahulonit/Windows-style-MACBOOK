@@ -1,0 +1,24 @@
+{
+    "configurations": [
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:Windows style MACBOOK}",
+            "name": "Debug WindowsTaskbar",
+            "target": "WindowsTaskbar",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug WindowsTaskbar"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:Windows style MACBOOK}",
+            "name": "Release WindowsTaskbar",
+            "target": "WindowsTaskbar",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release WindowsTaskbar"
+        }
+    ]
+}
