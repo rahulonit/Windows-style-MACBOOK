@@ -37,7 +37,10 @@ struct SystemFlyoutView: View {
                         service: state.accessibilityService
                     )
                 case .windowPreview:
-                    WindowPreviewView(state: state)
+                    WindowPreviewView(
+                        state: state,
+                        service: state.windowPreviewService
+                    )
                 case .network:
                     NetworkFlyout(service: state.networkService)
                 case .bluetooth:
@@ -234,7 +237,7 @@ private struct SettingsFlyout: View {
                     )
                     settingRow(
                         title: "Show on all displays",
-                        detail: "Display a taskbar at the bottom of every connected screen.",
+                        detail: "Display a taskbar on every connected screen and desktop Space.",
                         isOn: $service.showOnAllDisplays
                     )
                     settingRow(
@@ -518,6 +521,14 @@ private struct NotificationCenterFlyout: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
+                Button {
+                    state.perform(SystemActions.openNotificationCenter)
+                } label: {
+                    Label("macOS", systemImage: "macwindow")
+                }
+                .buttonStyle(.bordered)
+                .help("Open macOS Notification Center")
+
                 if !service.notifications.isEmpty {
                     Button("Clear all", action: service.clearAll)
                         .buttonStyle(.bordered)
@@ -882,6 +893,7 @@ private struct AccessibilityPermissionView: View {
 
 private struct WindowPreviewView: View {
     @ObservedObject var state: TaskbarState
+    @ObservedObject var service: WindowPreviewService
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -900,56 +912,116 @@ private struct WindowPreviewView: View {
                 }
             }
 
-            ScrollView {
-                LazyVStack(spacing: 7) {
+            if service.permissionRequired {
+                HStack(spacing: 8) {
+                    Image(systemName: "rectangle.on.rectangle.slash")
+                    Text("Allow Screen Recording to show live window thumbnails.")
+                        .font(.caption)
+                    Spacer()
+                    Button("Open Settings", action: service.openScreenRecordingSettings)
+                        .buttonStyle(.bordered)
+                }
+                .foregroundStyle(.secondary)
+            }
+
+            ScrollView(.horizontal, showsIndicators: state.previewWindows.count > 3) {
+                LazyHStack(alignment: .top, spacing: 10) {
                     ForEach(state.previewWindows) { window in
-                        HStack(spacing: 10) {
+                        VStack(spacing: 7) {
                             Button {
                                 state.activatePreviewWindow(window)
                             } label: {
-                                HStack(spacing: 10) {
-                                    Image(systemName: window.isMinimized ? "macwindow.badge.minus" : "macwindow")
-                                        .font(.system(size: 23))
-                                        .frame(width: 32)
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(window.title)
-                                            .lineLimit(1)
-                                        Text(window.isMinimized ? "Minimized" : "Open")
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
+                                VStack(alignment: .leading, spacing: 7) {
+                                    ZStack {
+                                        RoundedRectangle(cornerRadius: 7)
+                                            .fill(Color.black.opacity(0.28))
+                                        if let image = service.image(for: window) {
+                                            Image(nsImage: image)
+                                                .resizable()
+                                                .scaledToFit()
+                                                .opacity(window.isMinimized ? 0.58 : 1)
+                                        } else if let app = state.previewApp {
+                                            Image(nsImage: app.icon)
+                                                .resizable()
+                                                .scaledToFit()
+                                                .frame(width: 52, height: 52)
+                                                .opacity(0.75)
+                                        } else {
+                                            Image(systemName: "macwindow")
+                                                .font(.system(size: 36))
+                                                .foregroundStyle(.secondary)
+                                        }
                                     }
-                                    Spacer()
+                                    .frame(width: 205, height: 118)
+                                    .clipped()
+
+                                    Text(window.title)
+                                        .font(.system(size: 12, weight: .medium))
+                                        .lineLimit(1)
+                                    Label(
+                                        window.isMinimized ? "Minimized" : "Open",
+                                        systemImage: window.isMinimized
+                                            ? "minus.circle.fill"
+                                            : "circle.fill"
+                                    )
+                                    .font(.caption2)
+                                    .foregroundStyle(
+                                        window.isMinimized
+                                            ? Color.secondary
+                                            : TaskbarTheme.activeIndicator
+                                    )
                                 }
                                 .contentShape(Rectangle())
                             }
                             .buttonStyle(.plain)
 
-                            Button {
-                                state.togglePreviewWindowMinimized(window)
-                            } label: {
-                                Image(systemName: window.isMinimized ? "arrow.up.left.and.arrow.down.right" : "minus")
-                                    .frame(width: 24, height: 24)
+                            HStack(spacing: 8) {
+                                previewAction(
+                                    window.isMinimized
+                                        ? "arrow.up.left.and.arrow.down.right"
+                                        : "minus",
+                                    help: window.isMinimized ? "Restore" : "Minimize"
+                                ) {
+                                    state.togglePreviewWindowMinimized(window)
+                                }
+                                previewAction(
+                                    "arrow.up.left.and.arrow.down.right",
+                                    help: "Maximize",
+                                    isEnabled: !window.isMinimized
+                                ) {
+                                    state.maximizePreviewWindow(window)
+                                }
+                                Spacer()
+                                previewAction("xmark", help: "Close window") {
+                                    state.closePreviewWindow(window)
+                                }
                             }
-                            .buttonStyle(.plain)
-                            .help(window.isMinimized ? "Restore" : "Minimize")
-
-                            Button {
-                                state.closePreviewWindow(window)
-                            } label: {
-                                Image(systemName: "xmark")
-                                    .frame(width: 24, height: 24)
-                            }
-                            .buttonStyle(.plain)
-                            .help("Close window")
                         }
-                        .padding(.horizontal, 10)
-                        .frame(height: 58)
+                        .padding(9)
+                        .frame(width: 223)
                         .background(TaskbarTheme.hoverBackground)
-                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
                     }
                 }
             }
         }
+    }
+
+    private func previewAction(
+        _ symbol: String,
+        help: String,
+        isEnabled: Bool = true,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .frame(width: 25, height: 22)
+                .background(Color.white.opacity(0.06))
+                .clipShape(RoundedRectangle(cornerRadius: 4))
+        }
+        .buttonStyle(.plain)
+        .disabled(!isEnabled)
+        .help(help)
     }
 }
 

@@ -46,6 +46,7 @@ final class TaskbarNotificationService: ObservableObject {
     private var cancellables: Set<AnyCancellable> = []
     private var lastLowBatteryLevel: Int?
     private let duplicateSuppressionInterval: TimeInterval
+    private var unreadNotificationIDs: Set<UUID> = []
 
     init(
         networkService: NetworkService,
@@ -148,14 +149,19 @@ final class TaskbarNotificationService: ObservableObject {
 
     func dismiss(_ notification: TaskbarNotification) {
         notifications.removeAll { $0.id == notification.id }
+        if unreadNotificationIDs.remove(notification.id) != nil {
+            unreadCount = unreadNotificationIDs.count
+        }
     }
 
     func clearAll() {
         notifications.removeAll()
+        unreadNotificationIDs.removeAll()
         unreadCount = 0
     }
 
     func markAllRead() {
+        unreadNotificationIDs.removeAll()
         unreadCount = 0
     }
 
@@ -185,16 +191,26 @@ final class TaskbarNotificationService: ObservableObject {
         ) {
             // Refresh the existing event's timestamp and position without
             // increasing its unread count or filling the panel with duplicates.
-            notifications.remove(at: duplicateIndex)
+            let replaced = notifications.remove(at: duplicateIndex)
+            let wasUnread = unreadNotificationIDs.remove(replaced.id) != nil
             notifications.insert(notification, at: 0)
+            if unread && !wasUnread {
+                unreadNotificationIDs.insert(notification.id)
+            } else if wasUnread {
+                unreadNotificationIDs.insert(notification.id)
+            }
+            unreadCount = unreadNotificationIDs.count
             return
         }
 
         notifications.insert(notification, at: 0)
         if notifications.count > 30 {
+            let removed = notifications.suffix(notifications.count - 30)
+            removed.forEach { unreadNotificationIDs.remove($0.id) }
             notifications.removeLast(notifications.count - 30)
         }
-        if unread { unreadCount += 1 }
+        if unread { unreadNotificationIDs.insert(notification.id) }
+        unreadCount = unreadNotificationIDs.count
     }
 
     static func coalescingIndex(

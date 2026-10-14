@@ -31,6 +31,8 @@ final class TaskbarState: ObservableObject {
     let batteryService = BatteryService()
     let accessibilityService = AccessibilityService()
     let brightnessService = BrightnessService()
+    let dockGeometryService = DockGeometryService()
+    let windowPreviewService = WindowPreviewService()
     let bluetoothService = BluetoothService()
     let appearanceService = AppearanceService()
     let preferencesService: PreferencesService
@@ -47,6 +49,8 @@ final class TaskbarState: ObservableObject {
     private let workspace = NSWorkspace.shared
     private let pinnedAppsStore: PinnedAppsStore
     private var observers: [NSObjectProtocol] = []
+    private var dragLocalMouseUpMonitor: Any?
+    private var dragGlobalMouseUpMonitor: Any?
 
     init(
         pinnedApps: [AppDescriptor]? = nil,
@@ -70,6 +74,8 @@ final class TaskbarState: ObservableObject {
     deinit {
         let notificationCenter = workspace.notificationCenter
         observers.forEach(notificationCenter.removeObserver)
+        if let dragLocalMouseUpMonitor { NSEvent.removeMonitor(dragLocalMouseUpMonitor) }
+        if let dragGlobalMouseUpMonitor { NSEvent.removeMonitor(dragGlobalMouseUpMonitor) }
     }
 
     func isRunning(_ app: AppDescriptor) -> Bool {
@@ -110,6 +116,18 @@ final class TaskbarState: ObservableObject {
                     } else {
                         runningApplication.activate(options: [.activateAllWindows])
                     }
+                } else if runningApplication.isHidden {
+                    runningApplication.unhide()
+                    runningApplication.activate(options: [.activateAllWindows])
+                } else if runningApplication.isActive {
+                    // Hiding is the only permission-free equivalent of the
+                    // Windows taskbar's minimize-all-windows behavior.
+                    // When Accessibility is enabled, the branch below uses
+                    // each window's real minimized state instead.
+                    runningApplication.hide()
+                } else if hasVisibleWindow(for: runningApplication) {
+                    runningApplication.unhide()
+                    runningApplication.activate(options: [.activateAllWindows])
                 } else {
                     reopenApplication(runningApplication, descriptor: app)
                 }
@@ -121,6 +139,7 @@ final class TaskbarState: ObservableObject {
             if windows.count > 1 {
                 previewApp = app
                 previewWindows = windows
+                windowPreviewService.refresh(windows: windows)
                 activeFlyout = .windowPreview
             } else if let window = windows.first {
                 accessibilityService.toggle(window, application: runningApplication)
@@ -312,7 +331,19 @@ final class TaskbarState: ObservableObject {
 
     func beginDragging(_ app: AppDescriptor) {
         if !isPinned(app) { pin(app) }
+        endDragging()
         draggedPinnedAppIdentifier = app.bundleIdentifier
+        dragLocalMouseUpMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: .leftMouseUp
+        ) { [weak self] event in
+            Task { @MainActor in self?.endDragging() }
+            return event
+        }
+        dragGlobalMouseUpMonitor = NSEvent.addGlobalMonitorForEvents(
+            matching: .leftMouseUp
+        ) { [weak self] _ in
+            Task { @MainActor in self?.endDragging() }
+        }
     }
 
     func moveDraggedPinnedApp(over target: AppDescriptor) {
@@ -332,6 +363,10 @@ final class TaskbarState: ObservableObject {
 
     func endDragging() {
         draggedPinnedAppIdentifier = nil
+        if let dragLocalMouseUpMonitor { NSEvent.removeMonitor(dragLocalMouseUpMonitor) }
+        if let dragGlobalMouseUpMonitor { NSEvent.removeMonitor(dragGlobalMouseUpMonitor) }
+        dragLocalMouseUpMonitor = nil
+        dragGlobalMouseUpMonitor = nil
     }
 
     func quit(_ app: AppDescriptor) {
@@ -384,6 +419,7 @@ final class TaskbarState: ObservableObject {
         guard let runningApplication = runningApplication(for: app) else { return }
         previewApp = app
         previewWindows = accessibilityService.windows(for: runningApplication)
+        windowPreviewService.refresh(windows: previewWindows)
         windowCounts[app.bundleIdentifier] = previewWindows.count
         activeFlyout = .windowPreview
     }
@@ -409,6 +445,20 @@ final class TaskbarState: ObservableObject {
             accessibilityService.minimize(window)
         }
         refreshPreviewWindows()
+    }
+
+    func maximizePreviewWindow(_ window: AccessibilityWindow) {
+        accessibilityService.refreshAuthorization()
+        guard accessibilityService.isTrusted else {
+            activeFlyout = .accessibility
+            return
+        }
+        if windowManagerService.snap(window, to: .maximize) == .success {
+            activeFlyout = nil
+            if let app = previewApp {
+                refreshWindowInformation(for: app)
+            }
+        }
     }
 
     func closePreviewWindow(_ window: AccessibilityWindow) {
@@ -547,6 +597,24 @@ final class TaskbarState: ObservableObject {
         workspace.runningApplications.first { $0.bundleIdentifier == app.bundleIdentifier }
     }
 
+    private func hasVisibleWindow(for application: NSRunningApplication) -> Bool {
+        guard let windowInfo = CGWindowListCopyWindowInfo(
+            [.optionOnScreenOnly, .excludeDesktopElements],
+            kCGNullWindowID
+        ) as? [[String: Any]] else { return false }
+        return windowInfo.contains { info in
+            guard let ownerPID = info[kCGWindowOwnerPID as String] as? Int32,
+                  ownerPID == application.processIdentifier,
+                  (info[kCGWindowLayer as String] as? Int) == 0,
+                  let boundsDictionary = info[kCGWindowBounds as String] as? [String: Any],
+                  let bounds = CGRect(
+                    dictionaryRepresentation: boundsDictionary as CFDictionary
+                  )
+            else { return false }
+            return bounds.width > 20 && bounds.height > 20
+        }
+    }
+
     private func openFinderWindow(for app: AppDescriptor) {
         workspace.open(FileManager.default.homeDirectoryForCurrentUser)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
@@ -584,6 +652,7 @@ final class TaskbarState: ObservableObject {
             let runningApplication = runningApplication(for: app)
         else { return }
         previewWindows = accessibilityService.windows(for: runningApplication)
+        windowPreviewService.refresh(windows: previewWindows)
         windowCounts[app.bundleIdentifier] = previewWindows.count
         if previewWindows.isEmpty {
             activeFlyout = nil

@@ -4,12 +4,14 @@ import UniformTypeIdentifiers
 struct TaskbarView: View {
     @ObservedObject var state: TaskbarState
     @ObservedObject private var preferences: PreferencesService
+    @ObservedObject private var dockGeometry: DockGeometryService
     @State private var leftRegionWidth: CGFloat = 0
     @State private var rightRegionWidth: CGFloat = 0
 
     init(state: TaskbarState) {
         self.state = state
         self.preferences = state.preferencesService
+        self.dockGeometry = state.dockGeometryService
     }
 
     private var appIconSize: CGFloat { CGFloat(preferences.taskbarIconSize) }
@@ -24,7 +26,9 @@ struct TaskbarView: View {
     }
     private var buttonSize: CGFloat { TaskbarTheme.buttonSize(for: appIconSize) }
     private var buttonSpacing: CGFloat { TaskbarTheme.buttonSpacing(for: appIconSize) }
-    private var taskbarHeight: CGFloat { TaskbarTheme.height(for: appIconSize) }
+    private var taskbarHeight: CGFloat {
+        dockGeometry.taskbarHeight(for: appIconSize)
+    }
     private var trayControlWidth: CGFloat {
         TaskbarTheme.trayControlWidth(for: buttonSize)
     }
@@ -72,13 +76,13 @@ struct TaskbarView: View {
 
     private var leftRegion: some View {
         Button {
-            state.toggleFlyout(.notificationCenter)
+            state.perform(SystemActions.openWeather)
         } label: {
             HStack(spacing: 7) {
                 Image(systemName: "cloud.sun.fill")
                     .font(.system(size: navigationIconSize))
                     .symbolRenderingMode(.multicolor)
-                Text("Widgets")
+                Text("Weather")
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(TaskbarTheme.foreground)
             }
@@ -86,8 +90,8 @@ struct TaskbarView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(WindowsTaskbarButtonStyle())
-        .help("Widgets and notifications")
-        .accessibilityLabel("Widgets and notifications")
+        .help("Open Apple Weather")
+        .accessibilityLabel("Open Apple Weather")
     }
 
     @ViewBuilder
@@ -249,6 +253,11 @@ struct TaskbarView: View {
                 controlWidth: trayControlWidth
             ) {
                 state.toggleFlyout(.notificationCenter)
+            }
+            .contextMenu {
+                Button("Open macOS Notification Center") {
+                    state.perform(SystemActions.openNotificationCenter)
+                }
             }
 
             Button {

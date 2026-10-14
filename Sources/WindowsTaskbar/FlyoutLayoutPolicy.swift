@@ -41,8 +41,8 @@ enum FlyoutLayoutPolicy {
             proposed = CGSize(width: 440, height: 230)
         case .windowPreview:
             proposed = CGSize(
-                width: 430,
-                height: min(430, max(170, CGFloat(context.previewWindowCount * 65) + 70))
+                width: min(760, max(275, CGFloat(context.previewWindowCount * 233) + 40)),
+                height: 290
             )
         case .network:
             proposed = CGSize(width: 380, height: networkHeight(context))

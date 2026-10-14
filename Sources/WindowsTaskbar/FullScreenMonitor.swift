@@ -16,7 +16,7 @@ enum FullScreenMonitor {
                 [.optionOnScreenOnly, .excludeDesktopElements],
                 kCGNullWindowID
               ) as? [[String: Any]]
-        else { return [] }
+        else { return spaceDisplayIDs }
 
         let displayFrames = NSScreen.screens.compactMap { screen -> (CGDirectDisplayID, CGRect)? in
             guard let id = screen.displayID else { return nil }
@@ -127,7 +127,7 @@ enum FullScreenMonitor {
             guard let identifier = display["Display Identifier"] as? String,
                   let currentSpace = display["Current Space"] as? [String: Any],
                   let type = currentSpace["type"] as? Int,
-                  type != 0
+                  type == 4
             else { return nil }
             return identifier.uppercased()
         })

@@ -1,4 +1,5 @@
 import AppKit
+import Carbon
 import Combine
 import SwiftUI
 
@@ -15,11 +16,14 @@ final class WindowManagerService: ObservableObject {
     private var layoutPanel: SnapOverlayPanel?
     private var localMonitor: Any?
     private var globalMouseMonitor: Any?
-    private var globalKeyboardMonitor: Any?
+    private var hotKeyReferences: [EventHotKeyRef?] = []
+    private var hotKeyEventHandler: EventHandlerRef?
+    private var keyboardSettingsCancellable: AnyCancellable?
     private var hoverWorkItem: DispatchWorkItem?
     private var hoverIdentity: WindowIdentity?
     private var layoutWindow: AccessibilityWindow?
     private var dragCandidate: AccessibilityWindow?
+    private var dragCandidateInitialFrame: CGRect?
     private var draggedWindow: AccessibilityWindow?
     private var draggedWorkArea: ScreenWorkArea?
     private var taskbarHeightProvider: (() -> CGFloat)?
@@ -46,7 +50,7 @@ final class WindowManagerService: ObservableObject {
         fullScreenDisplayIDsProvider = fullScreenDisplayIDs
 
         localMonitor = NSEvent.addLocalMonitorForEvents(
-            matching: [.mouseMoved, .leftMouseDown, .leftMouseDragged, .leftMouseUp, .keyDown]
+            matching: [.mouseMoved, .leftMouseDown, .leftMouseDragged, .leftMouseUp]
         ) { [weak self] event in
             Task { @MainActor in self?.handle(event) }
             return event
@@ -56,10 +60,19 @@ final class WindowManagerService: ObservableObject {
         ) { [weak self] event in
             Task { @MainActor in self?.handle(event) }
         }
-        globalKeyboardMonitor = NSEvent.addGlobalMonitorForEvents(
-            matching: [.keyDown]
-        ) { [weak self] event in
-            Task { @MainActor in self?.handleKeyboard(event) }
+        keyboardSettingsCancellable = Publishers.CombineLatest3(
+            preferences.$windowManagementEnabled,
+            preferences.$keyboardSnappingEnabled,
+            accessibility.$isTrusted
+        )
+        .removeDuplicates { $0 == $1 }
+        .sink { [weak self] enabled, keyboardEnabled, trusted in
+            guard let self else { return }
+            if enabled && keyboardEnabled && trusted {
+                self.installKeyboardHotKeys()
+            } else {
+                self.removeKeyboardHotKeys()
+            }
         }
         workspaceObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didTerminateApplicationNotification,
@@ -78,13 +91,13 @@ final class WindowManagerService: ObservableObject {
     func stop() {
         if let localMonitor { NSEvent.removeMonitor(localMonitor) }
         if let globalMouseMonitor { NSEvent.removeMonitor(globalMouseMonitor) }
-        if let globalKeyboardMonitor { NSEvent.removeMonitor(globalKeyboardMonitor) }
         if let workspaceObserver {
             NSWorkspace.shared.notificationCenter.removeObserver(workspaceObserver)
         }
         localMonitor = nil
         globalMouseMonitor = nil
-        globalKeyboardMonitor = nil
+        keyboardSettingsCancellable = nil
+        removeKeyboardHotKeys()
         workspaceObserver = nil
         hoverWorkItem?.cancel()
         hoverWorkItem = nil
@@ -151,40 +164,105 @@ final class WindowManagerService: ObservableObject {
             handleMouseDragged()
         case .leftMouseUp:
             handleMouseUp()
-        case .keyDown:
-            handleKeyboard(event)
         default:
             break
         }
     }
 
-    private func handleKeyboard(_ event: NSEvent) {
+    private func handleKeyboardHotKey(identifier: UInt32) {
         guard isAvailable, preferences.keyboardSnappingEnabled else { return }
-        let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        guard modifiers.contains([.control, .option]) else { return }
-
-        if modifiers.contains(.shift) {
-            if event.keyCode == 123 { moveFocusedWindowToAdjacentDisplay(direction: -1) }
-            if event.keyCode == 124 { moveFocusedWindowToAdjacentDisplay(direction: 1) }
-            return
-        }
-
-        switch event.keyCode {
-        case 123:
+        switch identifier {
+        case 1:
             _ = snapFocusedWindow(to: .leftHalf)
-        case 124:
+        case 2:
             _ = snapFocusedWindow(to: .rightHalf)
-        case 126:
+        case 3:
             _ = snapFocusedWindow(to: .maximize)
-        case 125:
+        case 4:
             guard let window = accessibility.focusedWindow() else { return }
             if restoreStore.state(for: window) != nil {
                 _ = restore(window)
             } else {
                 accessibility.minimize(window)
             }
+        case 5:
+            moveFocusedWindowToAdjacentDisplay(direction: -1)
+        case 6:
+            moveFocusedWindowToAdjacentDisplay(direction: 1)
         default:
             return
+        }
+    }
+
+    private func installKeyboardHotKeys() {
+        guard hotKeyEventHandler == nil else { return }
+        var eventType = EventTypeSpec(
+            eventClass: OSType(kEventClassKeyboard),
+            eventKind: UInt32(kEventHotKeyPressed)
+        )
+        let callback: EventHandlerUPP = { _, event, userData in
+            guard let event, let userData else { return OSStatus(eventNotHandledErr) }
+            var hotKeyID = EventHotKeyID()
+            let status = GetEventParameter(
+                event,
+                EventParamName(kEventParamDirectObject),
+                EventParamType(typeEventHotKeyID),
+                nil,
+                MemoryLayout<EventHotKeyID>.size,
+                nil,
+                &hotKeyID
+            )
+            guard status == noErr else { return status }
+            let service = Unmanaged<WindowManagerService>
+                .fromOpaque(userData)
+                .takeUnretainedValue()
+            Task { @MainActor in
+                service.handleKeyboardHotKey(identifier: hotKeyID.id)
+            }
+            return noErr
+        }
+        InstallEventHandler(
+            GetApplicationEventTarget(),
+            callback,
+            1,
+            &eventType,
+            Unmanaged.passUnretained(self).toOpaque(),
+            &hotKeyEventHandler
+        )
+
+        let signature = OSType(0x57544252) // WTBR
+        let shortcuts: [(UInt32, UInt32, UInt32)] = [
+            (1, UInt32(kVK_LeftArrow), UInt32(controlKey | optionKey)),
+            (2, UInt32(kVK_RightArrow), UInt32(controlKey | optionKey)),
+            (3, UInt32(kVK_UpArrow), UInt32(controlKey | optionKey)),
+            (4, UInt32(kVK_DownArrow), UInt32(controlKey | optionKey)),
+            (5, UInt32(kVK_LeftArrow), UInt32(controlKey | optionKey | shiftKey)),
+            (6, UInt32(kVK_RightArrow), UInt32(controlKey | optionKey | shiftKey))
+        ]
+        for (identifier, keyCode, modifiers) in shortcuts {
+            var reference: EventHotKeyRef?
+            let hotKeyID = EventHotKeyID(signature: signature, id: identifier)
+            if RegisterEventHotKey(
+                keyCode,
+                modifiers,
+                hotKeyID,
+                GetApplicationEventTarget(),
+                0,
+                &reference
+            ) == noErr {
+                hotKeyReferences.append(reference)
+            }
+        }
+    }
+
+    private func removeKeyboardHotKeys() {
+        hotKeyReferences.compactMap { $0 }.forEach { reference in
+            _ = UnregisterEventHotKey(reference)
+        }
+        hotKeyReferences.removeAll()
+        if let hotKeyEventHandler {
+            RemoveEventHandler(hotKeyEventHandler)
+            self.hotKeyEventHandler = nil
         }
     }
 
@@ -199,9 +277,11 @@ final class WindowManagerService: ObservableObject {
               point.y <= frame.minY + min(54, frame.height)
         else {
             dragCandidate = nil
+            dragCandidateInitialFrame = nil
             return
         }
         dragCandidate = window
+        dragCandidateInitialFrame = frame
     }
 
     private func handleMouseDragged() {
@@ -211,6 +291,10 @@ final class WindowManagerService: ObservableObject {
         else { return }
 
         if draggedWindow == nil {
+            guard let initialFrame = dragCandidateInitialFrame,
+                  let currentFrame = accessibility.frame(of: window),
+                  Self.frameMoved(currentFrame, from: initialFrame)
+            else { return }
             if restoreStore.state(for: window) != nil {
                 _ = restore(window)
                 if let refreshed = accessibility.window(atQuartzPoint: point) {
@@ -246,6 +330,7 @@ final class WindowManagerService: ObservableObject {
     private func handleMouseUp() {
         defer {
             dragCandidate = nil
+            dragCandidateInitialFrame = nil
             draggedWindow = nil
             draggedWorkArea = nil
             activeZone = nil
@@ -293,7 +378,7 @@ final class WindowManagerService: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.45, execute: workItem)
     }
 
-    private func snap(
+    func snap(
         _ window: AccessibilityWindow,
         to zone: SnapZone,
         preferredWorkArea: ScreenWorkArea? = nil
@@ -470,5 +555,9 @@ final class WindowManagerService: ObservableObject {
 
     private func currentQuartzPoint() -> CGPoint? {
         CGEvent(source: nil)?.location
+    }
+
+    private static func frameMoved(_ current: CGRect, from initial: CGRect) -> Bool {
+        abs(current.minX - initial.minX) > 2 || abs(current.minY - initial.minY) > 2
     }
 }

@@ -183,7 +183,7 @@ final class AccessibilityService: ObservableObject {
     func toggle(_ window: AccessibilityWindow, application: NSRunningApplication) {
         if window.isMinimized {
             restore(window, application: application)
-        } else if window.isFocused {
+        } else if window.isFocused || application.isActive {
             setMinimized(true, for: window)
         } else {
             activate(window, application: application)

@@ -49,6 +49,16 @@ func taskbarGeometryScalesProportionally() {
     #expect(TaskbarTheme.systemTrayIconSize == 20)
 }
 
+@Test("Taskbar height follows the Dock without clipping large icons")
+func taskbarHeightTracksDockGeometry() {
+    #expect(DockGeometryPolicy.taskbarHeight(iconSize: 36, dockTileSize: 36) == 56)
+    #expect(DockGeometryPolicy.taskbarHeight(iconSize: 26, dockTileSize: 64) == 84)
+    #expect(
+        DockGeometryPolicy.taskbarHeight(iconSize: 56, dockTileSize: 36)
+            == TaskbarTheme.height(for: 56)
+    )
+}
+
 @Test("Full-screen geometry is detected without treating menu-bar-maximized windows as full screen")
 func fullScreenGeometryDetectionIsTolerant() {
     let displayID: CGDirectDisplayID = 1
@@ -78,6 +88,10 @@ func fullScreenSpacesAreSelectedPerDisplay() {
         [
             "Display Identifier": "DISPLAY-B",
             "Current Space": ["type": 4]
+        ],
+        [
+            "Display Identifier": "DISPLAY-SYSTEM",
+            "Current Space": ["type": 2]
         ]
     ]
 

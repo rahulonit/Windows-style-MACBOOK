@@ -20,7 +20,10 @@ enum PowerAction: String, CaseIterable, Identifiable {
     }
 }
 
+@MainActor
 enum SystemActions {
+    private static var desktopHiddenProcessIdentifiers: [pid_t] = []
+    private static var desktopPreviouslyActiveProcessIdentifier: pid_t?
     static func openApplications() {
         NSWorkspace.shared.open(URL(fileURLWithPath: "/System/Applications", isDirectory: true))
     }
@@ -41,6 +44,10 @@ enum SystemActions {
         openApplication(at: "/System/Library/CoreServices/NotificationCenter.app")
     }
 
+    static func openWeather() {
+        openApplication(at: "/System/Applications/Weather.app")
+    }
+
     static func openNetworkSettings() {
         openPreferencePane("/System/Library/PreferencePanes/Network.prefPane")
     }
@@ -59,19 +66,47 @@ enum SystemActions {
 
     static func showDesktop() {
         let workspace = NSWorkspace.shared
-        for application in workspace.runningApplications where
-            application.activationPolicy == .regular && application.bundleIdentifier != "com.apple.finder" {
-            application.hide()
+        if !desktopHiddenProcessIdentifiers.isEmpty {
+            restoreDesktopIfNeeded()
+            return
         }
+
+        let applications = workspace.runningApplications.filter {
+            $0.activationPolicy == .regular
+                && $0.bundleIdentifier != "com.apple.finder"
+                && !$0.isHidden
+        }
+        desktopHiddenProcessIdentifiers = applications.map(\.processIdentifier)
+        desktopPreviouslyActiveProcessIdentifier = applications.first(where: \.isActive)?
+            .processIdentifier
+        applications.forEach { $0.hide() }
         workspace.runningApplications
             .first(where: { $0.bundleIdentifier == "com.apple.finder" })?
             .activate(options: [.activateAllWindows])
     }
 
+    static func restoreDesktopIfNeeded() {
+        guard !desktopHiddenProcessIdentifiers.isEmpty else { return }
+        let workspace = NSWorkspace.shared
+        let identifiers = Set(desktopHiddenProcessIdentifiers)
+        let applications = workspace.runningApplications.filter {
+            identifiers.contains($0.processIdentifier)
+        }
+        applications.forEach { $0.unhide() }
+        if let previousPID = desktopPreviouslyActiveProcessIdentifier,
+           let previousApplication = applications.first(where: {
+               $0.processIdentifier == previousPID
+           }) {
+            previousApplication.activate(options: [.activateAllWindows])
+        }
+        desktopHiddenProcessIdentifiers = []
+        desktopPreviouslyActiveProcessIdentifier = nil
+    }
+
     static func performPowerAction(_ action: PowerAction) {
         switch action {
         case .lock:
-            run("/usr/bin/pmset", ["displaysleepnow"])
+            lockScreen()
         case .sleep:
             run("/usr/bin/pmset", ["sleepnow"])
         case .restart:
@@ -81,6 +116,30 @@ enum SystemActions {
         case .signOut:
             run("/usr/bin/osascript", ["-e", "tell application \"System Events\" to log out"])
         }
+    }
+
+    private static func lockScreen() {
+        // Control-Command-Q is macOS's system Lock Screen shortcut. Posting it
+        // through CoreGraphics avoids an Automation permission request for
+        // System Events and actually locks the session instead of only turning
+        // off the display.
+        guard let source = CGEventSource(stateID: .hidSystemState),
+              let keyDown = CGEvent(
+                keyboardEventSource: source,
+                virtualKey: 12,
+                keyDown: true
+              ),
+              let keyUp = CGEvent(
+                keyboardEventSource: source,
+                virtualKey: 12,
+                keyDown: false
+              )
+        else { return }
+        let flags: CGEventFlags = [.maskControl, .maskCommand]
+        keyDown.flags = flags
+        keyUp.flags = flags
+        keyDown.post(tap: .cghidEventTap)
+        keyUp.post(tap: .cghidEventTap)
     }
 
     private static func openApplication(at path: String) {

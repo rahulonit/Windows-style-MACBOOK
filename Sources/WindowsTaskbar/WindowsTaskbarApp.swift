@@ -40,6 +40,7 @@ final class WindowsTaskbarApp: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         taskbarCoordinator?.stop()
+        SystemActions.restoreDesktopIfNeeded()
         dockVisibilityController.restoreDock()
         dockPreferenceCancellable = nil
     }

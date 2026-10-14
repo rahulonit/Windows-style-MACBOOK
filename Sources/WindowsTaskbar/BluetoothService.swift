@@ -25,6 +25,8 @@ final class BluetoothService: NSObject, ObservableObject {
     private var inquiry: IOBluetoothDeviceInquiry?
     private var pairing: IOBluetoothDevicePair?
     private var devicesByID: [String: IOBluetoothDevice] = [:]
+    private var lastSeenByID: [String: Date] = [:]
+    private let discoveryRetentionInterval: TimeInterval = 45
 
     override init() {
         super.init()
@@ -62,7 +64,10 @@ final class BluetoothService: NSObject, ObservableObject {
         isPowered = IOBluetoothHostController.default()?.powerState
             == kBluetoothHCIPowerStateON
         let paired = IOBluetoothDevice.pairedDevices() as? [IOBluetoothDevice] ?? []
-        paired.forEach { devicesByID[$0.addressString] = $0 }
+        paired.forEach {
+            devicesByID[$0.addressString] = $0
+            lastSeenByID[$0.addressString] = Date()
+        }
         rebuildDevices()
     }
 
@@ -149,6 +154,14 @@ final class BluetoothService: NSObject, ObservableObject {
     }
 
     private func rebuildDevices() {
+        let cutoff = Date().addingTimeInterval(-discoveryRetentionInterval)
+        devicesByID = devicesByID.filter { id, device in
+            let keep = device.isPaired()
+                || device.isConnected()
+                || (lastSeenByID[id] ?? .distantPast) >= cutoff
+            if !keep { lastSeenByID.removeValue(forKey: id) }
+            return keep
+        }
         devices = devicesByID.values.map { device in
             BluetoothDeviceDescriptor(
                 id: device.addressString,
@@ -176,6 +189,7 @@ extension BluetoothService: @preconcurrency IOBluetoothDeviceInquiryDelegate {
     ) {
         Task { @MainActor in
             self.devicesByID[device.addressString] = device
+            self.lastSeenByID[device.addressString] = Date()
             self.rebuildDevices()
         }
     }
@@ -187,6 +201,7 @@ extension BluetoothService: @preconcurrency IOBluetoothDeviceInquiryDelegate {
     ) {
         Task { @MainActor in
             self.devicesByID[device.addressString] = device
+            self.lastSeenByID[device.addressString] = Date()
             self.rebuildDevices()
         }
     }

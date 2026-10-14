@@ -2,7 +2,12 @@
 set -euo pipefail
 
 project_root="${0:A:h:h}"
-version="${WINDOWS_TASKBAR_VERSION:-0.3.0}"
+plist_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$project_root/Resources/Info.plist")"
+version="${WINDOWS_TASKBAR_VERSION:-$plist_version}"
+if [[ "$version" != "$plist_version" ]]; then
+    echo "WINDOWS_TASKBAR_VERSION ($version) must match CFBundleShortVersionString ($plist_version)." >&2
+    exit 2
+fi
 dist_path="$project_root/dist"
 dmg_path="$dist_path/WindowsTaskbar-$version.dmg"
 staging_path="$(mktemp -d "${TMPDIR:-/tmp}/windows-taskbar-dmg.XXXXXX")"

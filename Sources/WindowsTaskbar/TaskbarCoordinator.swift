@@ -13,6 +13,8 @@ final class TaskbarCoordinator {
     private var displayPreferenceCancellable: AnyCancellable?
     private var iconSizeCancellable: AnyCancellable?
     private var windowAdaptationCancellable: AnyCancellable?
+    private var windowManagementCancellable: AnyCancellable?
+    private var dockGeometryCancellable: AnyCancellable?
     private var observers: [NSObjectProtocol] = []
     private var workspaceObservers: [NSObjectProtocol] = []
     private var localMouseMonitor: Any?
@@ -24,7 +26,7 @@ final class TaskbarCoordinator {
 
     init(state: TaskbarState) {
         self.state = state
-        previousTaskbarHeight = TaskbarTheme.height(
+        previousTaskbarHeight = state.dockGeometryService.taskbarHeight(
             for: CGFloat(state.preferencesService.taskbarIconSize)
         )
     }
@@ -32,11 +34,13 @@ final class TaskbarCoordinator {
     func start() {
         fullScreenDisplayIDs = FullScreenMonitor.fullScreenDisplayIDs()
         rebuildPanels()
-        state.accessibilityService.adaptApplicationWindows(
-            from: 0,
-            to: previousTaskbarHeight,
-            on: visibleTaskbarDisplayIDs
-        )
+        if state.preferencesService.windowManagementEnabled {
+            state.accessibilityService.adaptApplicationWindows(
+                from: 0,
+                to: previousTaskbarHeight,
+                on: visibleTaskbarDisplayIDs
+            )
+        }
         state.windowManagerService.start(
             taskbarHeight: { [weak self] in
                 self?.currentTaskbarHeight ?? 0
@@ -65,8 +69,9 @@ final class TaskbarCoordinator {
         }
         displayPreferenceCancellable = state.preferencesService.$showOnAllDisplays
             .dropFirst()
+            .removeDuplicates()
             .sink { [weak self] _ in
-                self?.rebuildPanels()
+                self?.applyDisplayPreferenceChange()
             }
         iconSizeCancellable = state.preferencesService.$taskbarIconSize
             .dropFirst()
@@ -80,6 +85,19 @@ final class TaskbarCoordinator {
             .debounce(for: .milliseconds(180), scheduler: RunLoop.main)
             .sink { [weak self] iconSize in
                 self?.commitApplicationWindowHeight(for: CGFloat(iconSize))
+            }
+        windowManagementCancellable = state.preferencesService.$windowManagementEnabled
+            .dropFirst()
+            .removeDuplicates()
+            .sink { [weak self] enabled in
+                guard enabled else { return }
+                self?.scheduleWindowAreaEnforcement()
+            }
+        dockGeometryCancellable = state.dockGeometryService.$tileSize
+            .dropFirst()
+            .removeDuplicates()
+            .sink { [weak self] _ in
+                self?.updateGeometryForDockChange()
             }
         fullScreenTimer = Timer.scheduledTimer(
             withTimeInterval: 0.25,
@@ -150,6 +168,8 @@ final class TaskbarCoordinator {
         displayPreferenceCancellable = nil
         iconSizeCancellable = nil
         windowAdaptationCancellable = nil
+        windowManagementCancellable = nil
+        dockGeometryCancellable = nil
         fullScreenTimer?.invalidate()
         fullScreenTimer = nil
         windowLayoutTimer?.invalidate()
@@ -165,7 +185,10 @@ final class TaskbarCoordinator {
         if state.preferencesService.showOnAllDisplays {
             targetScreens = NSScreen.screens
         } else {
-            targetScreens = [NSScreen.main ?? NSScreen.screens[0]]
+            // `NSScreen.main` follows whichever app or flyout is focused and
+            // makes a single taskbar jump between monitors. The first screen
+            // is the stable macOS primary display (the one with the menu bar).
+            targetScreens = [NSScreen.screens[0]]
         }
         let connectedScreenNumbers = Set(targetScreens.compactMap(\.screenNumber))
         let disconnectedScreenNumbers = panelsByScreenNumber.keys.filter {
@@ -173,6 +196,7 @@ final class TaskbarCoordinator {
         }
 
         for screenNumber in disconnectedScreenNumbers {
+            panelsByScreenNumber[screenNumber]?.orderOut(nil)
             panelsByScreenNumber[screenNumber]?.close()
             panelsByScreenNumber.removeValue(forKey: screenNumber)
         }
@@ -193,6 +217,38 @@ final class TaskbarCoordinator {
         }
     }
 
+    private func applyDisplayPreferenceChange() {
+        let previousDisplayIDs = Set(panelsByScreenNumber.keys.map {
+            CGDirectDisplayID($0.uint32Value)
+        })
+        let targetScreenNumbers: Set<NSNumber>
+        if state.preferencesService.showOnAllDisplays {
+            targetScreenNumbers = Set(NSScreen.screens.compactMap(\.screenNumber))
+        } else {
+            targetScreenNumbers = Set(NSScreen.screens.prefix(1).compactMap(\.screenNumber))
+        }
+        let targetDisplayIDs = Set(targetScreenNumbers.map {
+            CGDirectDisplayID($0.uint32Value)
+        })
+        let removedDisplayIDs = previousDisplayIDs.subtracting(targetDisplayIDs)
+
+        if state.preferencesService.windowManagementEnabled,
+           !removedDisplayIDs.isEmpty {
+            state.accessibilityService.adaptApplicationWindows(
+                from: currentTaskbarHeight,
+                to: 0,
+                on: removedDisplayIDs
+            )
+        }
+
+        if let flyoutScreenNumber = flyoutPanel?.screen?.screenNumber,
+           !targetScreenNumbers.contains(flyoutScreenNumber) {
+            state.dismissFlyout()
+        }
+        rebuildPanels()
+        scheduleWindowAreaEnforcement()
+    }
+
     private func updatePanelGeometry(for iconSize: CGFloat) {
         for (screenNumber, panel) in panelsByScreenNumber {
             guard let screen = NSScreen.screens.first(where: {
@@ -211,13 +267,15 @@ final class TaskbarCoordinator {
     }
 
     private func commitApplicationWindowHeight(for iconSize: CGFloat) {
-        let newHeight = TaskbarTheme.height(for: iconSize)
+        let newHeight = state.dockGeometryService.taskbarHeight(for: iconSize)
         guard abs(newHeight - previousTaskbarHeight) > 0.01 else { return }
-        state.accessibilityService.adaptApplicationWindows(
-            from: previousTaskbarHeight,
-            to: newHeight,
-            on: visibleTaskbarDisplayIDs
-        )
+        if state.preferencesService.windowManagementEnabled {
+            state.accessibilityService.adaptApplicationWindows(
+                from: previousTaskbarHeight,
+                to: newHeight,
+                on: visibleTaskbarDisplayIDs
+            )
+        }
         previousTaskbarHeight = newHeight
     }
 
@@ -254,16 +312,16 @@ final class TaskbarCoordinator {
     }
 
     private var currentTaskbarHeight: CGFloat {
-        TaskbarTheme.height(
+        state.dockGeometryService.taskbarHeight(
             for: CGFloat(state.preferencesService.taskbarIconSize)
         )
     }
 
     private func enforceAvailableWindowArea() {
-        guard !state.windowManagerService.isDraggingWindow else { return }
-        let height = TaskbarTheme.height(
-            for: CGFloat(state.preferencesService.taskbarIconSize)
-        )
+        guard state.preferencesService.windowManagementEnabled,
+              !state.windowManagerService.isDraggingWindow
+        else { return }
+        let height = currentTaskbarHeight
         state.accessibilityService.adaptApplicationWindows(
             from: height,
             to: height,
@@ -281,8 +339,10 @@ final class TaskbarCoordinator {
 
     private func setPanel(_ panel: TaskbarPanel, hidden: Bool) {
         panel.ignoresMouseEvents = hidden
-        panel.alphaValue = hidden ? 0 : 1
-        if !hidden {
+        panel.alphaValue = 1
+        if hidden {
+            panel.orderOut(nil)
+        } else {
             panel.orderFrontRegardless()
         }
     }
@@ -318,13 +378,19 @@ final class TaskbarCoordinator {
     }
 
     private func taskbarFrame(for screen: NSScreen, iconSize: CGFloat) -> NSRect {
-        let height = TaskbarTheme.height(for: iconSize)
+        let height = state.dockGeometryService.taskbarHeight(for: iconSize)
         return NSRect(
             x: screen.frame.minX,
             y: screen.frame.minY,
             width: screen.frame.width,
             height: height
         )
+    }
+
+    private func updateGeometryForDockChange() {
+        let iconSize = CGFloat(state.preferencesService.taskbarIconSize)
+        updatePanelGeometry(for: iconSize)
+        commitApplicationWindowHeight(for: iconSize)
     }
 
     private func updateFlyout(_ flyout: TaskbarFlyout?) {
@@ -413,7 +479,9 @@ final class TaskbarCoordinator {
             for: flyout,
             context: flyoutLayoutContext(availableSize: availableSize)
         )
-        let anchorX = flyoutAnchorPoint?.x ?? panel.frame.midX
+        let anchorX = flyout == .start
+            ? screen.frame.midX
+            : (flyoutAnchorPoint?.x ?? panel.frame.midX)
         let minimumX = screen.frame.minX + 12
         let maximumX = screen.frame.maxX - size.width - 12
         let originX = min(
