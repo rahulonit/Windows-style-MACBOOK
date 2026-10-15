@@ -5,6 +5,12 @@ import SwiftUI
 @MainActor
 final class TaskbarCoordinator {
     private let state: TaskbarState
+    private lazy var windowControlsCoordinator = WindowControlsCoordinator(
+        accessibility: state.accessibilityService,
+        preferences: state.preferencesService,
+        windowManager: state.windowManagerService
+    )
+    private lazy var settingsWindowCoordinator = SettingsWindowCoordinator(state: state)
     private var panelsByScreenNumber: [NSNumber: TaskbarPanel] = [:]
     private var flyoutPanel: TaskbarPanel?
     private var flyoutAnchorPoint: CGPoint?
@@ -15,6 +21,8 @@ final class TaskbarCoordinator {
     private var windowAdaptationCancellable: AnyCancellable?
     private var windowManagementCancellable: AnyCancellable?
     private var dockGeometryCancellable: AnyCancellable?
+    private var settingsWindowCancellable: AnyCancellable?
+    private var settingsRefreshCancellable: AnyCancellable?
     private var observers: [NSObjectProtocol] = []
     private var workspaceObservers: [NSObjectProtocol] = []
     private var localMouseMonitor: Any?
@@ -52,6 +60,22 @@ final class TaskbarCoordinator {
                 self?.fullScreenDisplayIDs ?? []
             }
         )
+        windowControlsCoordinator.start()
+        settingsWindowCancellable = state.$settingsWindowRequest
+            .dropFirst()
+            .sink { [weak self] _ in
+                self?.settingsWindowCoordinator.show()
+            }
+        settingsRefreshCancellable = state.$settingsAppliedRevision
+            .dropFirst()
+            .sink { [weak self] _ in
+                guard let self else { return }
+                rebuildPanels()
+                updatePanelGeometry(
+                    for: CGFloat(state.preferencesService.taskbarIconSize)
+                )
+                scheduleWindowAreaEnforcement()
+            }
         flyoutCancellable = state.$activeFlyout
             .dropFirst()
             .sink { [weak self] flyout in
@@ -154,6 +178,8 @@ final class TaskbarCoordinator {
     }
 
     func stop() {
+        settingsWindowCoordinator.close()
+        windowControlsCoordinator.stop()
         state.windowManagerService.stop()
         observers.forEach(NotificationCenter.default.removeObserver)
         observers.removeAll()
@@ -170,6 +196,8 @@ final class TaskbarCoordinator {
         windowAdaptationCancellable = nil
         windowManagementCancellable = nil
         dockGeometryCancellable = nil
+        settingsWindowCancellable = nil
+        settingsRefreshCancellable = nil
         fullScreenTimer?.invalidate()
         fullScreenTimer = nil
         windowLayoutTimer?.invalidate()

@@ -16,6 +16,8 @@ The application includes:
 - Notification center and quick settings panels
 - Dock and login-item integration
 - Custom theming and scaling controls
+- Windows-style controls attached to the active app window
+- Standalone Windows-style Settings window with persistent on/off switches
 
 ## Requirements
 

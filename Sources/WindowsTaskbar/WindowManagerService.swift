@@ -137,6 +137,28 @@ final class WindowManagerService: ObservableObject {
         accessibility.minimize(window)
     }
 
+    func toggleMaximize(_ window: AccessibilityWindow) -> WindowOperationResult {
+        guard isAvailable else { return .accessibilityUnavailable }
+        if restoreStore.state(for: window) != nil {
+            return restore(window)
+        }
+        return snap(window, to: .maximize)
+    }
+
+    func showSnapLayouts(for window: AccessibilityWindow) {
+        guard isAvailable,
+              preferences.snapLayoutsEnabled,
+              let windowFrame = accessibility.frame(of: window)
+        else { return }
+        let anchor = CGRect(
+            x: windowFrame.maxX - 84,
+            y: windowFrame.minY + 4,
+            width: 42,
+            height: 28
+        )
+        showLayoutPanel(for: window, zoomButtonFrame: anchor)
+    }
+
     private var isAvailable: Bool {
         preferences.windowManagementEnabled && accessibility.isTrusted
     }
@@ -412,7 +434,7 @@ final class WindowManagerService: ObservableObject {
         return result
     }
 
-    private func restore(_ window: AccessibilityWindow) -> WindowOperationResult {
+    func restore(_ window: AccessibilityWindow) -> WindowOperationResult {
         guard let state = restoreStore.remove(for: window) else {
             return .applicationRejectedFrame
         }

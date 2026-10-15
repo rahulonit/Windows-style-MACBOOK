@@ -16,6 +16,10 @@ enum TaskbarTheme {
     static let activeIndicator = Color(red: 0.38, green: 0.72, blue: 1.0)
     static let runningIndicator = Color.white.opacity(0.72)
     static let foreground = Color.white.opacity(0.95)
+    static let accentPurple = Color(red: 0.58, green: 0.38, blue: 1.0)
+    static let accentCyan = Color(red: 0.22, green: 0.78, blue: 1.0)
+    static let glassFill = Color.white.opacity(0.075)
+    static let glassStroke = Color.white.opacity(0.13)
 
     static func height(for iconSize: CGFloat) -> CGFloat {
         iconSize * (referenceTaskbarHeight / referenceIconSize)

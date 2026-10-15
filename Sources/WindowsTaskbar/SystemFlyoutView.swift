@@ -210,152 +210,786 @@ private struct OnboardingFlyout: View {
     }
 }
 
-private struct SettingsFlyout: View {
+private enum SettingsCategory: String, CaseIterable, Identifiable {
+    case personalization = "Personalization"
+    case taskbar = "Taskbar items"
+    case windows = "Window management"
+    case system = "System behavior"
+    case permissions = "Permissions"
+    case about = "About"
+
+    var id: String { rawValue }
+
+    var symbol: String {
+        switch self {
+        case .personalization: return "paintbrush.fill"
+        case .taskbar: return "rectangle.bottomthird.inset.filled"
+        case .windows: return "macwindow.on.rectangle"
+        case .system: return "desktopcomputer"
+        case .permissions: return "checkmark.shield.fill"
+        case .about: return "info.circle.fill"
+        }
+    }
+
+    var subtitle: String {
+        switch self {
+        case .personalization: return "Size and visual scale"
+        case .taskbar: return "Choose what appears"
+        case .windows: return "Controls, previews, and snapping"
+        case .system: return "Dock, displays, and startup"
+        case .permissions: return "Required macOS access"
+        case .about: return "Version and capabilities"
+        }
+    }
+}
+
+@MainActor
+private struct SettingsDraft: Equatable {
+    var taskbarIconSize: Double
+    var navigationIconSize: Double
+    var startMenuLogoStyle: StartMenuLogoStyle
+    var showWeatherWidget: Bool
+    var showSearchButton: Bool
+    var showTaskViewButton: Bool
+    var showQuickSettingsButton: Bool
+    var showNetworkButton: Bool
+    var showVolumeButton: Bool
+    var showBatteryButton: Bool
+    var showClock: Bool
+    var showNotificationButton: Bool
+    var showDesktopButton: Bool
+    var hideMacDock: Bool
+    var showOnAllDisplays: Bool
+    var launchAtLogin: Bool
+    var windowManagementEnabled: Bool
+    var windowsStyleControlsEnabled: Bool
+    var windowControlsShowTitle: Bool
+    var windowPreviewsEnabled: Bool
+    var edgeSnappingEnabled: Bool
+    var snapLayoutsEnabled: Bool
+    var keyboardSnappingEnabled: Bool
+    var snapActivationDistance: Double
+
+    init(service: PreferencesService) {
+        taskbarIconSize = service.taskbarIconSize
+        navigationIconSize = service.navigationIconSize
+        startMenuLogoStyle = service.startMenuLogoStyle
+        showWeatherWidget = service.showWeatherWidget
+        showSearchButton = service.showSearchButton
+        showTaskViewButton = service.showTaskViewButton
+        showQuickSettingsButton = service.showQuickSettingsButton
+        showNetworkButton = service.showNetworkButton
+        showVolumeButton = service.showVolumeButton
+        showBatteryButton = service.showBatteryButton
+        showClock = service.showClock
+        showNotificationButton = service.showNotificationButton
+        showDesktopButton = service.showDesktopButton
+        hideMacDock = service.hideMacDock
+        showOnAllDisplays = service.showOnAllDisplays
+        launchAtLogin = service.launchAtLogin
+        windowManagementEnabled = service.windowManagementEnabled
+        windowsStyleControlsEnabled = service.windowsStyleControlsEnabled
+        windowControlsShowTitle = service.windowControlsShowTitle
+        windowPreviewsEnabled = service.windowPreviewsEnabled
+        edgeSnappingEnabled = service.edgeSnappingEnabled
+        snapLayoutsEnabled = service.snapLayoutsEnabled
+        keyboardSnappingEnabled = service.keyboardSnappingEnabled
+        snapActivationDistance = service.snapActivationDistance
+    }
+
+    mutating func resetTaskbarItems() {
+        showWeatherWidget = true
+        showSearchButton = true
+        showTaskViewButton = true
+        showQuickSettingsButton = true
+        showNetworkButton = true
+        showVolumeButton = true
+        showBatteryButton = true
+        showClock = true
+        showNotificationButton = true
+        showDesktopButton = true
+    }
+
+    mutating func resetWindowManagement() {
+        windowManagementEnabled = true
+        windowsStyleControlsEnabled = true
+        windowControlsShowTitle = true
+        windowPreviewsEnabled = true
+        edgeSnappingEnabled = true
+        snapLayoutsEnabled = true
+        keyboardSnappingEnabled = true
+        snapActivationDistance = 12
+    }
+
+    func apply(to service: PreferencesService) {
+        service.taskbarIconSize = taskbarIconSize
+        service.navigationIconSize = navigationIconSize
+        service.startMenuLogoStyle = startMenuLogoStyle
+        service.showWeatherWidget = showWeatherWidget
+        service.showSearchButton = showSearchButton
+        service.showTaskViewButton = showTaskViewButton
+        service.showQuickSettingsButton = showQuickSettingsButton
+        service.showNetworkButton = showNetworkButton
+        service.showVolumeButton = showVolumeButton
+        service.showBatteryButton = showBatteryButton
+        service.showClock = showClock
+        service.showNotificationButton = showNotificationButton
+        service.showDesktopButton = showDesktopButton
+        service.hideMacDock = hideMacDock
+        service.showOnAllDisplays = showOnAllDisplays
+        if launchAtLogin != service.launchAtLogin {
+            service.setLaunchAtLogin(launchAtLogin)
+        }
+        service.windowManagementEnabled = windowManagementEnabled
+        service.windowsStyleControlsEnabled = windowsStyleControlsEnabled
+        service.windowControlsShowTitle = windowControlsShowTitle
+        service.windowPreviewsEnabled = windowPreviewsEnabled
+        service.edgeSnappingEnabled = edgeSnappingEnabled
+        service.snapLayoutsEnabled = snapLayoutsEnabled
+        service.keyboardSnappingEnabled = keyboardSnappingEnabled
+        service.snapActivationDistance = snapActivationDistance
+    }
+}
+
+struct SettingsFlyout: View {
     @ObservedObject var state: TaskbarState
     @ObservedObject var service: PreferencesService
+    var showsHeader = true
+    @State private var selectedCategory: SettingsCategory = .personalization
+    @State private var draft: SettingsDraft
+    @State private var showsSavedConfirmation = false
+
+    init(
+        state: TaskbarState,
+        service: PreferencesService,
+        showsHeader: Bool = true
+    ) {
+        self.state = state
+        self.service = service
+        self.showsHeader = showsHeader
+        _draft = State(initialValue: SettingsDraft(service: service))
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack {
-                Label("Taskbar settings", systemImage: "gearshape.fill")
-                    .font(.system(size: 18, weight: .semibold))
+        HStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 10) {
+                if showsHeader {
+                    sidebarBrand
+                }
+
+                ForEach(SettingsCategory.allCases) { category in
+                    Button {
+                        withAnimation(.easeOut(duration: 0.14)) {
+                            selectedCategory = category
+                        }
+                    } label: {
+                        HStack(spacing: 11) {
+                            Image(systemName: category.symbol)
+                                .font(.system(size: 14, weight: .medium))
+                                .foregroundStyle(
+                                    selectedCategory == category
+                                        ? Color.white
+                                        : Color.white.opacity(0.72)
+                                )
+                                .frame(width: 30, height: 30)
+                                .background(
+                                    selectedCategory == category
+                                        ? Color.white.opacity(0.12)
+                                        : Color.white.opacity(0.04)
+                                )
+                                .clipShape(RoundedRectangle(cornerRadius: 9))
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(category.rawValue)
+                                    .font(.system(size: 13, weight: .semibold))
+                                Text(category.subtitle)
+                                    .font(.system(size: 10.5))
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
+                            Spacer(minLength: 4)
+                        }
+                        .padding(.horizontal, 10)
+                        .frame(height: 54)
+                        .background {
+                            if selectedCategory == category {
+                                RoundedRectangle(cornerRadius: 13, style: .continuous)
+                                    .fill(
+                                        LinearGradient(
+                                            colors: [
+                                                TaskbarTheme.accentPurple.opacity(0.38),
+                                                TaskbarTheme.accentCyan.opacity(0.16)
+                                            ],
+                                            startPoint: .leading,
+                                            endPoint: .trailing
+                                        )
+                                    )
+                                    .overlay {
+                                        RoundedRectangle(cornerRadius: 13, style: .continuous)
+                                            .stroke(Color.white.opacity(0.16), lineWidth: 0.8)
+                                    }
+                            }
+                        }
+                        .overlay(alignment: .leading) {
+                            if selectedCategory == category {
+                                Capsule()
+                                    .fill(
+                                        LinearGradient(
+                                            colors: [TaskbarTheme.accentCyan, .white],
+                                            startPoint: .top,
+                                            endPoint: .bottom
+                                        )
+                                    )
+                                    .frame(width: 3, height: 26)
+                                    .shadow(color: TaskbarTheme.accentCyan.opacity(0.7), radius: 5)
+                            }
+                        }
+                        .clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                }
+
                 Spacer()
-                Text("Windows Taskbar")
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Windows Skin Pack")
+                        .font(.caption.weight(.semibold))
+                    Text("Version \(appVersion)")
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .glassSettingsCard(cornerRadius: 13)
+            }
+            .padding(14)
+            .frame(width: 226)
+            .background {
+                LinearGradient(
+                    colors: [
+                        Color.black.opacity(0.16),
+                        TaskbarTheme.accentPurple.opacity(0.06),
+                        Color.black.opacity(0.22)
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            }
+
+            Rectangle()
+                .fill(Color.white.opacity(0.08))
+                .frame(width: 0.5)
+
+            VStack(alignment: .leading, spacing: 0) {
+                pageHeader
+                    .padding(.horizontal, 28)
+                    .padding(.top, 24)
+                    .padding(.bottom, 18)
+
+                ScrollView {
+                    categoryContent
+                        .padding(.horizontal, 28)
+                        .padding(.bottom, 28)
+                }
+            }
+        }
+    }
+
+    private var pageHeader: some View {
+        HStack(spacing: 15) {
+            Image(systemName: selectedCategory.symbol)
+                .font(.system(size: 20, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(width: 46, height: 46)
+                .background {
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .fill(
+                            LinearGradient(
+                                colors: [TaskbarTheme.accentPurple, TaskbarTheme.accentCyan],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                        .shadow(color: TaskbarTheme.accentPurple.opacity(0.35), radius: 14, y: 5)
+                }
+            VStack(alignment: .leading, spacing: 3) {
+                Text(selectedCategory.rawValue)
+                    .font(.system(size: 25, weight: .semibold, design: .rounded))
+                Text(selectedCategory.subtitle)
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            if selectedCategory == .taskbar {
+                Button("Reset") { draft.resetTaskbarItems() }
+                    .buttonStyle(.bordered)
+            } else if selectedCategory == .windows {
+                Button("Reset") { draft.resetWindowManagement() }
+                    .buttonStyle(.bordered)
+            }
+
+            if showsSavedConfirmation {
+                Label("Saved", systemImage: "checkmark.circle.fill")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.green)
+                    .transition(.opacity)
+            }
+
+            Button(action: saveChanges) {
+                Label("Save changes", systemImage: "checkmark")
+            }
+                .buttonStyle(.borderedProminent)
+                .tint(TaskbarTheme.accentPurple)
+                .controlSize(.large)
+                .disabled(!hasPendingChanges)
+        }
+    }
+
+    private var sidebarBrand: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "sparkles")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(width: 34, height: 34)
+                .background {
+                    RoundedRectangle(cornerRadius: 11, style: .continuous)
+                        .fill(
+                            LinearGradient(
+                                colors: [TaskbarTheme.accentPurple, TaskbarTheme.accentCyan],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                }
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Skin Settings")
+                    .font(.system(size: 15, weight: .semibold, design: .rounded))
+                Text("Make the desktop yours")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.horizontal, 4)
+        .padding(.bottom, 6)
+    }
+
+    @ViewBuilder
+    private var categoryContent: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            switch selectedCategory {
+            case .personalization:
+                startLogoSetting
+                iconSizeSetting
+                navigationIconSizeSetting
+            case .taskbar:
+                taskbarItemsPage
+            case .windows:
+                windowManagementPage
+            case .system:
+                systemBehaviorPage
+            case .permissions:
+                permissionsPage
+            case .about:
+                aboutPage
+            }
+        }
+    }
+
+    private var taskbarItemsPage: some View {
+        VStack(spacing: 8) {
+            settingRow(
+                title: "Weather widget",
+                detail: "Open Apple Weather from the left side of the taskbar.",
+                isOn: $draft.showWeatherWidget
+            )
+            settingRow(
+                title: "Search",
+                detail: "Open Spotlight from a centered taskbar button.",
+                isOn: $draft.showSearchButton
+            )
+            settingRow(
+                title: "Task View",
+                detail: "Open Mission Control to see all application windows.",
+                isOn: $draft.showTaskViewButton
+            )
+            settingRow(
+                title: "Quick settings",
+                detail: "Show the system-control chevron in the notification area.",
+                isOn: $draft.showQuickSettingsButton
+            )
+            settingRow(
+                title: "Wi-Fi",
+                detail: "Show network status and nearby Wi-Fi controls.",
+                isOn: $draft.showNetworkButton
+            )
+            settingRow(
+                title: "Sound",
+                detail: "Show the current volume and audio controls.",
+                isOn: $draft.showVolumeButton
+            )
+            settingRow(
+                title: "Battery",
+                detail: "Show charge, power source, health, and percentage.",
+                isOn: $draft.showBatteryButton
+            )
+            settingRow(
+                title: "Clock and calendar",
+                detail: "Show the date, time, and Windows-style calendar.",
+                isOn: $draft.showClock
+            )
+            settingRow(
+                title: "Notifications",
+                detail: "Show the notification bell and unread badge.",
+                isOn: $draft.showNotificationButton
+            )
+            settingRow(
+                title: "Show Desktop",
+                detail: "Show the desktop target at the far-right edge.",
+                isOn: $draft.showDesktopButton
+            )
+        }
+    }
+
+    private var windowManagementPage: some View {
+        VStack(spacing: 8) {
+            settingRow(
+                title: "Enable window management",
+                detail: "Keep windows above the taskbar and enable all controls below.",
+                isOn: $draft.windowManagementEnabled
+            )
+            settingRow(
+                title: "Windows-style window controls",
+                detail: "Attach minimize, Snap Layouts, maximize/restore, and close controls.",
+                isOn: $draft.windowsStyleControlsEnabled
+            )
+            .disabled(!draft.windowManagementEnabled)
+            settingRow(
+                title: "Show app title and icon",
+                detail: "Include identity information in the active window control strip.",
+                isOn: $draft.windowControlsShowTitle
+            )
+            .disabled(
+                !draft.windowManagementEnabled || !draft.windowsStyleControlsEnabled
+            )
+            settingRow(
+                title: "Grouped window previews",
+                detail: "Show live thumbnails when an application has multiple windows.",
+                isOn: $draft.windowPreviewsEnabled
+            )
+            .disabled(!draft.windowManagementEnabled)
+            settingRow(
+                title: "Snap at screen edges",
+                detail: "Drag a title bar to an edge or corner to arrange the window.",
+                isOn: $draft.edgeSnappingEnabled
+            )
+            .disabled(!draft.windowManagementEnabled)
+            settingRow(
+                title: "Snap Layouts",
+                detail: "Display Windows-style layouts from the maximize controls.",
+                isOn: $draft.snapLayoutsEnabled
+            )
+            .disabled(!draft.windowManagementEnabled)
+            settingRow(
+                title: "Keyboard snapping",
+                detail: "Use Control–Option–Arrow; add Shift to move between displays.",
+                isOn: $draft.keyboardSnappingEnabled
+            )
+            .disabled(!draft.windowManagementEnabled)
+
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Edge activation distance")
+                            .font(.system(size: 13, weight: .semibold))
+                        Text("How close a dragged window must be before snapping activates.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Text("\(Int(draft.snapActivationDistance.rounded())) pt")
+                        .font(.caption.weight(.semibold).monospacedDigit())
+                }
+                Slider(value: $draft.snapActivationDistance, in: 6...32, step: 1)
+                    .disabled(
+                        !draft.windowManagementEnabled || !draft.edgeSnappingEnabled
+                    )
+            }
+            .padding(14)
+            .glassSettingsCard(cornerRadius: 12)
+        }
+    }
+
+    private var systemBehaviorPage: some View {
+        VStack(spacing: 8) {
+            settingRow(
+                title: "Hide the macOS Dock",
+                detail: "Restore the original Dock automatically when this app exits.",
+                isOn: $draft.hideMacDock
+            )
+            settingRow(
+                title: "Show on all displays",
+                detail: "Display an independent taskbar on every connected screen.",
+                isOn: $draft.showOnAllDisplays
+            )
+            settingRow(
+                title: "Launch at login",
+                detail: "Start Windows Skin Pack automatically after signing in.",
+                isOn: Binding(
+                    get: { draft.launchAtLogin },
+                    set: { draft.launchAtLogin = $0 }
+                )
+            )
+            if let error = service.loginItemError {
+                Label(error, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.orange.opacity(0.1))
+                    .clipShape(RoundedRectangle(cornerRadius: 9))
+            }
+        }
+    }
+
+    private var permissionsPage: some View {
+        VStack(spacing: 10) {
+            permissionCard(
+                title: "Accessibility",
+                detail: "Required once for snapping, resizing, minimizing, restoring, and closing application windows.",
+                symbol: "macwindow.badge.plus",
+                enabled: state.accessibilityService.isTrusted,
+                buttonTitle: "Review access"
+            ) {
+                state.accessibilityService.openPrivacySettings()
+            }
+            permissionCard(
+                title: "Location for Wi-Fi",
+                detail: "macOS requires location access before an app can display nearby network names.",
+                symbol: "location.circle.fill",
+                enabled: state.networkService.permissionState == .authorized,
+                buttonTitle: "Request access"
+            ) {
+                state.networkService.requestPermissionAndScan()
+            }
+
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Setup assistant")
+                        .font(.system(size: 13, weight: .semibold))
+                    Text("Review the recommended permissions and startup options again.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("Run setup again") {
+                    service.resetOnboarding()
+                    state.toggleFlyout(.onboarding)
+                }
+                .buttonStyle(.bordered)
+            }
+            .padding(14)
+            .glassSettingsCard(cornerRadius: 12)
+        }
+    }
+
+    private var aboutPage: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(spacing: 16) {
+                Image(systemName: "rectangle.bottomthird.inset.filled")
+                    .font(.system(size: 34, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 64, height: 64)
+                    .background {
+                        RoundedRectangle(cornerRadius: 17, style: .continuous)
+                            .fill(
+                                LinearGradient(
+                                    colors: [TaskbarTheme.accentPurple, TaskbarTheme.accentCyan],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
+                            )
+                            .shadow(
+                                color: TaskbarTheme.accentPurple.opacity(0.35),
+                                radius: 16,
+                                y: 6
+                            )
+                    }
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Windows Skin Pack")
+                        .font(.system(size: 22, weight: .semibold))
+                    Text("Version \(appVersion)")
+                        .font(.subheadline.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                    Text("A native Windows-inspired desktop layer for macOS.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 12) {
+                capabilityRow("Windows-style taskbar and Start menu", "checkmark.circle.fill")
+                capabilityRow("App launching and grouped window previews", "checkmark.circle.fill")
+                capabilityRow("Snap Layouts and keyboard window management", "checkmark.circle.fill")
+                capabilityRow("Wi-Fi, sound, battery, calendar, and notifications", "checkmark.circle.fill")
+                capabilityRow("Multi-display and full-screen behavior", "checkmark.circle.fill")
+            }
+            .padding(16)
+            .glassSettingsCard()
+
+            Text("Built with native AppKit and SwiftUI. Some system integrations require permission from macOS.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var hasPendingChanges: Bool {
+        draft != SettingsDraft(service: service)
+    }
+
+    private func saveChanges() {
+        draft.apply(to: service)
+        state.refreshAfterSettingsChange()
+        draft = SettingsDraft(service: service)
+        withAnimation(.easeOut(duration: 0.16)) {
+            showsSavedConfirmation = true
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) {
+            withAnimation(.easeOut(duration: 0.16)) {
+                showsSavedConfirmation = false
+            }
+        }
+    }
+
+    private func permissionCard(
+        title: String,
+        detail: String,
+        symbol: String,
+        enabled: Bool,
+        buttonTitle: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        HStack(spacing: 14) {
+            Image(systemName: symbol)
+                .font(.system(size: 20, weight: .medium))
+                .foregroundStyle(enabled ? .green : TaskbarTheme.activeIndicator)
+                .frame(width: 42, height: 42)
+                .background((enabled ? Color.green : TaskbarTheme.activeIndicator).opacity(0.12))
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Text(title)
+                        .font(.system(size: 13, weight: .semibold))
+                    Text(enabled ? "Allowed" : "Required")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(enabled ? .green : .orange)
+                }
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer()
+            Button(enabled ? "Review" : buttonTitle, action: action)
+                .buttonStyle(.bordered)
+        }
+        .padding(14)
+        .glassSettingsCard(cornerRadius: 12)
+    }
+
+    private func capabilityRow(_ title: String, _ symbol: String) -> some View {
+        Label(title, systemImage: symbol)
+            .font(.system(size: 12.5, weight: .medium))
+            .foregroundStyle(.primary, .green)
+    }
+
+    private var appVersion: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+            ?? "0.3.2"
+    }
+
+    private func sectionHeader(
+        _ title: String,
+        symbol: String,
+        resetAction: (() -> Void)? = nil
+    ) -> some View {
+        HStack {
+            Label(title, systemImage: symbol)
+                .font(.system(size: 14, weight: .semibold))
+            Spacer()
+            if let resetAction {
+                Button("Reset", action: resetAction)
+                    .buttonStyle(.bordered)
+            }
+        }
+        .padding(.top, 2)
+    }
+
+    private var startLogoSetting: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Start button logo")
+                    .font(.system(size: 14, weight: .semibold))
+                Text("Switch between the familiar Apple mark and a Windows-style Start logo.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
-                    iconSizeSetting
-                    navigationIconSizeSetting
-
-                    settingRow(
-                        title: "Hide the macOS Dock",
-                        detail: "The original Dock is restored when this app exits.",
-                        isOn: $service.hideMacDock
-                    )
-                    settingRow(
-                        title: "Show on all displays",
-                        detail: "Display a taskbar on every connected screen and desktop Space.",
-                        isOn: $service.showOnAllDisplays
-                    )
-                    settingRow(
-                        title: "Launch at login",
-                        detail: "Start automatically when you sign in.",
-                        isOn: Binding(
-                            get: { service.launchAtLogin },
-                            set: { service.setLaunchAtLogin($0) }
-                        )
-                    )
-
-                    Divider()
-
-                    VStack(alignment: .leading, spacing: 10) {
-                        HStack {
-                            Label("Window management", systemImage: "rectangle.3.group")
-                                .font(.system(size: 14, weight: .semibold))
-                            Spacer()
-                            Button("Reset", action: service.resetWindowManagementSettings)
-                                .buttonStyle(.bordered)
+            HStack(spacing: 12) {
+                ForEach(StartMenuLogoStyle.allCases) { style in
+                    Button {
+                        withAnimation(.easeOut(duration: 0.18)) {
+                            draft.startMenuLogoStyle = style
                         }
-
-                        settingRow(
-                            title: "Enable window management",
-                            detail: "Keep application windows above the taskbar and enable snap controls.",
-                            isOn: $service.windowManagementEnabled
-                        )
-                        settingRow(
-                            title: "Snap windows at screen edges",
-                            detail: "Drag a title bar to an edge or corner to arrange its window.",
-                            isOn: $service.edgeSnappingEnabled
-                        )
-                        .disabled(!service.windowManagementEnabled)
-                        settingRow(
-                            title: "Show Snap Layouts",
-                            detail: "Hover over a window’s green button to choose a layout.",
-                            isOn: $service.snapLayoutsEnabled
-                        )
-                        .disabled(!service.windowManagementEnabled)
-                        settingRow(
-                            title: "Keyboard snapping",
-                            detail: "Use Control–Option–Arrow; add Shift to move between displays.",
-                            isOn: $service.keyboardSnappingEnabled
-                        )
-                        .disabled(!service.windowManagementEnabled)
-
-                        VStack(alignment: .leading, spacing: 6) {
-                            HStack {
-                                Text("Edge activation distance")
+                    } label: {
+                        HStack(spacing: 11) {
+                            StartMenuLogoView(
+                                style: style,
+                                size: 28,
+                                color: draft.startMenuLogoStyle == style
+                                    ? .white
+                                    : Color.white.opacity(0.72)
+                            )
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(style.title)
                                     .font(.system(size: 13, weight: .semibold))
-                                Spacer()
-                                Text("\(Int(service.snapActivationDistance.rounded())) pt")
-                                    .font(.caption)
-                                    .monospacedDigit()
+                                Text(style == .apple ? "macOS identity" : "Windows Start")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
                             }
-                            Slider(
-                                value: $service.snapActivationDistance,
-                                in: 6...32,
-                                step: 1
-                            )
-                            .disabled(
-                                !service.windowManagementEnabled
-                                    || !service.edgeSnappingEnabled
-                            )
+                            Spacer()
+                            Image(systemName: draft.startMenuLogoStyle == style
+                                  ? "checkmark.circle.fill"
+                                  : "circle")
+                                .foregroundStyle(
+                                    draft.startMenuLogoStyle == style
+                                        ? TaskbarTheme.accentCyan
+                                        : Color.white.opacity(0.24)
+                                )
                         }
-                        .padding(10)
-                        .background(TaskbarTheme.hoverBackground)
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
-                    }
-
-                    Divider()
-
-                    HStack {
-                        permissionStatus(
-                            "Accessibility",
-                            enabled: state.accessibilityService.isTrusted
-                        )
-                        Spacer()
-                        Button("Review Permissions") {
-                            state.accessibilityService.openPrivacySettings()
+                        .padding(.horizontal, 14)
+                        .frame(maxWidth: .infinity, minHeight: 62)
+                        .background {
+                            RoundedRectangle(cornerRadius: 13, style: .continuous)
+                                .fill(
+                                    draft.startMenuLogoStyle == style
+                                        ? TaskbarTheme.accentPurple.opacity(0.22)
+                                        : Color.white.opacity(0.035)
+                                )
                         }
-                        .buttonStyle(.bordered)
-                    }
-
-                    HStack {
-                        permissionStatus(
-                            "Wi-Fi location",
-                            enabled: state.networkService.permissionState == .authorized
-                        )
-                        Spacer()
-                        Button("Request Access") {
-                            state.networkService.requestPermissionAndScan()
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 13, style: .continuous)
+                                .stroke(
+                                    draft.startMenuLogoStyle == style
+                                        ? TaskbarTheme.accentCyan.opacity(0.68)
+                                        : Color.white.opacity(0.08),
+                                    lineWidth: draft.startMenuLogoStyle == style ? 1.2 : 0.7
+                                )
                         }
-                        .buttonStyle(.bordered)
-                        .disabled(state.networkService.permissionState == .authorized)
                     }
-
-                    if let error = service.loginItemError {
-                        Text(error)
-                            .font(.caption)
-                            .foregroundStyle(.orange)
-                    }
-
-                    HStack {
-                        Button("Run setup again") {
-                            service.resetOnboarding()
-                            state.toggleFlyout(.onboarding)
-                        }
-                        .buttonStyle(.bordered)
-                        Spacer()
-                        Text("Version 0.3.0")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
+                    .buttonStyle(.plain)
                 }
-                .padding(.trailing, 4)
             }
         }
+        .padding(16)
+        .glassSettingsCard()
     }
 
     private var iconSizeSetting: some View {
@@ -369,7 +1003,7 @@ private struct SettingsFlyout: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
-                Text(service.taskbarIconSize.formatted(.number.precision(.fractionLength(0...1))) + " pt")
+                Text(draft.taskbarIconSize.formatted(.number.precision(.fractionLength(0...1))) + " pt")
                     .font(.system(size: 12, weight: .semibold))
                     .monospacedDigit()
             }
@@ -379,7 +1013,7 @@ private struct SettingsFlyout: View {
                     .font(.system(size: 14))
                     .frame(width: 20)
                 Slider(
-                    value: $service.taskbarIconSize,
+                    value: $draft.taskbarIconSize,
                     in: PreferencesService.minimumTaskbarIconSize...PreferencesService.maximumTaskbarIconSize,
                     step: 0.5
                 )
@@ -390,30 +1024,33 @@ private struct SettingsFlyout: View {
 
             HStack {
                 HStack(spacing: 8) {
-                    Image(systemName: "apple.logo")
-                        .font(.system(size: TaskbarTheme.startIconSize(
-                            for: CGFloat(service.taskbarIconSize)
-                        )))
+                    StartMenuLogoView(
+                        style: draft.startMenuLogoStyle,
+                        size: TaskbarTheme.startIconSize(
+                            for: CGFloat(draft.taskbarIconSize)
+                        )
+                    )
                     Image(systemName: "magnifyingglass")
                         .font(.system(size: TaskbarTheme.navigationIconSize(
-                            for: CGFloat(service.taskbarIconSize)
+                            for: CGFloat(draft.taskbarIconSize)
                         )))
                     Image(systemName: "wifi")
                         .font(.system(size: TaskbarTheme.systemTrayIconSize))
                 }
                 .frame(height: 34)
                 Spacer()
-                Button("Reset", action: service.resetTaskbarIconSize)
+                Button("Reset") {
+                    draft.taskbarIconSize = PreferencesService.defaultTaskbarIconSize
+                }
                     .buttonStyle(.bordered)
                     .disabled(
-                        service.taskbarIconSize
+                        draft.taskbarIconSize
                             == PreferencesService.defaultTaskbarIconSize
                     )
             }
         }
-        .padding(11)
-        .background(TaskbarTheme.hoverBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .padding(16)
+        .glassSettingsCard()
     }
 
     private var navigationIconSizeSetting: some View {
@@ -428,7 +1065,7 @@ private struct SettingsFlyout: View {
                 }
                 Spacer()
                 Text(
-                    service.navigationIconSize.formatted(
+                    draft.navigationIconSize.formatted(
                         .number.precision(.fractionLength(0...1))
                     ) + " pt"
                 )
@@ -441,7 +1078,7 @@ private struct SettingsFlyout: View {
                     .font(.system(size: 12))
                     .frame(width: 20)
                 Slider(
-                    value: $service.navigationIconSize,
+                    value: $draft.navigationIconSize,
                     in: PreferencesService.minimumNavigationIconSize...PreferencesService.maximumNavigationIconSize,
                     step: 0.5
                 )
@@ -455,17 +1092,18 @@ private struct SettingsFlyout: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()
-                Button("Reset", action: service.resetNavigationIconSize)
+                Button("Reset") {
+                    draft.navigationIconSize = PreferencesService.defaultNavigationIconSize
+                }
                     .buttonStyle(.bordered)
                     .disabled(
-                        service.navigationIconSize
+                        draft.navigationIconSize
                             == PreferencesService.defaultNavigationIconSize
                     )
             }
         }
-        .padding(11)
-        .background(TaskbarTheme.hoverBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .padding(16)
+        .glassSettingsCard()
     }
 
     private func settingRow(
@@ -486,9 +1124,8 @@ private struct SettingsFlyout: View {
                 .labelsHidden()
                 .toggleStyle(.switch)
         }
-        .padding(10)
-        .background(TaskbarTheme.hoverBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .padding(14)
+        .glassSettingsCard(cornerRadius: 12)
     }
 
     private func permissionStatus(_ title: String, enabled: Bool) -> some View {
@@ -498,6 +1135,50 @@ private struct SettingsFlyout: View {
         )
         .font(.caption)
         .foregroundStyle(enabled ? .green : .secondary)
+    }
+}
+
+private struct SettingsGlassCardModifier: ViewModifier {
+    let cornerRadius: CGFloat
+
+    func body(content: Content) -> some View {
+        content
+            .background {
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                Color.white.opacity(0.105),
+                                TaskbarTheme.accentPurple.opacity(0.055),
+                                Color.white.opacity(0.045)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .stroke(
+                        LinearGradient(
+                            colors: [
+                                Color.white.opacity(0.19),
+                                TaskbarTheme.accentPurple.opacity(0.18),
+                                Color.white.opacity(0.06)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ),
+                        lineWidth: 0.8
+                    )
+            }
+            .shadow(color: Color.black.opacity(0.14), radius: 12, y: 6)
+    }
+}
+
+private extension View {
+    func glassSettingsCard(cornerRadius: CGFloat = 16) -> some View {
+        modifier(SettingsGlassCardModifier(cornerRadius: cornerRadius))
     }
 }
 

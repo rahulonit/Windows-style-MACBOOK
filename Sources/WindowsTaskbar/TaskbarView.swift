@@ -37,10 +37,38 @@ struct TaskbarView: View {
         GeometryReader { geometry in
             ZStack {
                 VisualEffectView()
-                Color(red: 0.05, green: 0.08, blue: 0.13).opacity(0.58)
+                LinearGradient(
+                    colors: [
+                        Color(red: 0.12, green: 0.10, blue: 0.24).opacity(0.76),
+                        Color(red: 0.05, green: 0.08, blue: 0.16).opacity(0.82),
+                        Color(red: 0.09, green: 0.07, blue: 0.18).opacity(0.78)
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+
+                LinearGradient(
+                    colors: [
+                        TaskbarTheme.accentPurple.opacity(0.14),
+                        .clear,
+                        TaskbarTheme.accentCyan.opacity(0.08)
+                    ],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                )
 
                 Rectangle()
-                    .fill(Color(red: 0.56, green: 0.59, blue: 0.64).opacity(0.34))
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                Color.white.opacity(0.28),
+                                TaskbarTheme.accentPurple.opacity(0.32),
+                                Color.white.opacity(0.16)
+                            ],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                    )
                     .frame(height: 1)
                     .frame(maxHeight: .infinity, alignment: .top)
 
@@ -74,24 +102,27 @@ struct TaskbarView: View {
         }
     }
 
+    @ViewBuilder
     private var leftRegion: some View {
-        Button {
-            state.perform(SystemActions.openWeather)
-        } label: {
-            HStack(spacing: 7) {
-                Image(systemName: "cloud.sun.fill")
-                    .font(.system(size: navigationIconSize))
-                    .symbolRenderingMode(.multicolor)
-                Text("Weather")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(TaskbarTheme.foreground)
+        if preferences.showWeatherWidget {
+            Button {
+                state.perform(SystemActions.openWeather)
+            } label: {
+                HStack(spacing: 7) {
+                    Image(systemName: "cloud.sun.fill")
+                        .font(.system(size: navigationIconSize))
+                        .symbolRenderingMode(.multicolor)
+                    Text("Weather")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(TaskbarTheme.foreground)
+                }
+                .frame(width: max(86, buttonSize * 1.75), height: buttonSize)
+                .contentShape(Rectangle())
             }
-            .frame(width: max(86, buttonSize * 1.75), height: buttonSize)
-            .contentShape(Rectangle())
+            .buttonStyle(WindowsTaskbarButtonStyle())
+            .help("Open Apple Weather")
+            .accessibilityLabel("Open Apple Weather")
         }
-        .buttonStyle(WindowsTaskbarButtonStyle())
-        .help("Open Apple Weather")
-        .accessibilityLabel("Open Apple Weather")
     }
 
     @ViewBuilder
@@ -114,27 +145,32 @@ struct TaskbarView: View {
             TaskbarButton(accessibilityLabel: "Start", buttonSize: buttonSize) {
                 state.toggleFlyout(.start)
             } content: {
-                Image(systemName: "apple.logo")
-                    .font(.system(size: startIconSize, weight: .medium))
-                    .foregroundStyle(TaskbarTheme.foreground)
+                StartMenuLogoView(
+                    style: preferences.startMenuLogoStyle,
+                    size: startIconSize
+                )
             }
 
-            TaskbarButton(accessibilityLabel: "Search", buttonSize: buttonSize) {
-                state.perform(SystemActions.openSpotlight)
-            } content: {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: navigationIconSize, weight: .regular))
-                    .foregroundStyle(TaskbarTheme.foreground)
+            if preferences.showSearchButton {
+                TaskbarButton(accessibilityLabel: "Search", buttonSize: buttonSize) {
+                    state.perform(SystemActions.openSpotlight)
+                } content: {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: navigationIconSize, weight: .regular))
+                        .foregroundStyle(TaskbarTheme.foreground)
+                }
             }
 
-            TaskbarButton(accessibilityLabel: "Task View", buttonSize: buttonSize) {
-                state.perform(SystemActions.openMissionControl)
-            } content: {
-                Image(systemName: "rectangle.on.rectangle")
-                    .font(.system(size: navigationIconSize, weight: .regular))
-                    .foregroundStyle(TaskbarTheme.foreground)
+            if preferences.showTaskViewButton {
+                TaskbarButton(accessibilityLabel: "Task View", buttonSize: buttonSize) {
+                    state.perform(SystemActions.openMissionControl)
+                } content: {
+                    Image(systemName: "rectangle.on.rectangle")
+                        .font(.system(size: navigationIconSize, weight: .regular))
+                        .foregroundStyle(TaskbarTheme.foreground)
+                }
+                .padding(.trailing, TaskbarTheme.navigationAppSeparation)
             }
-            .padding(.trailing, TaskbarTheme.navigationAppSeparation)
 
             ForEach(visibleApps) { app in
                 TaskbarAppButton(
@@ -207,75 +243,89 @@ struct TaskbarView: View {
 
     private var rightRegion: some View {
         HStack(alignment: .center, spacing: TaskbarTheme.traySpacing) {
-            compactButton(
-                "Hidden system controls",
-                symbol: "chevron.up",
-                iconSize: adaptiveTrayIconSize,
-                controlWidth: trayControlWidth
-            ) {
-                state.toggleFlyout(.quickSettings)
+            if preferences.showQuickSettingsButton {
+                compactButton(
+                    "Hidden system controls",
+                    symbol: "chevron.up",
+                    iconSize: adaptiveTrayIconSize,
+                    controlWidth: trayControlWidth
+                ) {
+                    state.toggleFlyout(.quickSettings)
+                }
             }
-            NetworkTrayButton(
-                service: state.networkService,
-                iconSize: TaskbarTheme.systemTrayIconSize,
-                controlHeight: buttonSize,
-                controlWidth: trayControlWidth
-            ) {
-                state.toggleFlyout(.network)
+            if preferences.showNetworkButton {
+                NetworkTrayButton(
+                    service: state.networkService,
+                    iconSize: TaskbarTheme.systemTrayIconSize,
+                    controlHeight: buttonSize,
+                    controlWidth: trayControlWidth
+                ) {
+                    state.toggleFlyout(.network)
+                }
             }
-            AudioTrayButton(
-                service: state.audioService,
-                iconSize: TaskbarTheme.systemTrayIconSize,
-                controlHeight: buttonSize,
-                controlWidth: trayControlWidth
-            ) {
-                state.toggleFlyout(.volume)
+            if preferences.showVolumeButton {
+                AudioTrayButton(
+                    service: state.audioService,
+                    iconSize: TaskbarTheme.systemTrayIconSize,
+                    controlHeight: buttonSize,
+                    controlWidth: trayControlWidth
+                ) {
+                    state.toggleFlyout(.volume)
+                }
             }
-            BatteryTrayButton(
-                service: state.batteryService,
-                iconSize: TaskbarTheme.systemTrayIconSize,
-                controlHeight: buttonSize,
-                controlWidth: max(62, trayControlWidth * 1.8)
-            ) {
-                state.toggleFlyout(.battery)
+            if preferences.showBatteryButton {
+                BatteryTrayButton(
+                    service: state.batteryService,
+                    iconSize: TaskbarTheme.systemTrayIconSize,
+                    controlHeight: buttonSize,
+                    controlWidth: max(62, trayControlWidth * 1.8)
+                ) {
+                    state.toggleFlyout(.battery)
+                }
             }
-            Button {
-                state.toggleFlyout(.calendar)
-            } label: {
-                ClockView(width: 82, height: buttonSize)
+            if preferences.showClock {
+                Button {
+                    state.toggleFlyout(.calendar)
+                } label: {
+                    ClockView(width: 82, height: buttonSize)
+                }
+                .buttonStyle(WindowsTaskbarButtonStyle())
+                .help("Calendar and date")
             }
-            .buttonStyle(WindowsTaskbarButtonStyle())
-            .help("Calendar and date")
-            NotificationTrayButton(
-                service: state.notificationService,
-                iconSize: adaptiveTrayIconSize,
-                controlHeight: buttonSize,
-                controlWidth: trayControlWidth
-            ) {
-                state.toggleFlyout(.notificationCenter)
-            }
-            .contextMenu {
-                Button("Open macOS Notification Center") {
-                    state.perform(SystemActions.openNotificationCenter)
+            if preferences.showNotificationButton {
+                NotificationTrayButton(
+                    service: state.notificationService,
+                    iconSize: adaptiveTrayIconSize,
+                    controlHeight: buttonSize,
+                    controlWidth: trayControlWidth
+                ) {
+                    state.toggleFlyout(.notificationCenter)
+                }
+                .contextMenu {
+                    Button("Open macOS Notification Center") {
+                        state.perform(SystemActions.openNotificationCenter)
+                    }
                 }
             }
 
-            Button {
-                state.perform(SystemActions.showDesktop)
-            } label: {
-                ZStack(alignment: .trailing) {
-                    Color.white.opacity(0.035)
-                    Rectangle()
-                        .fill(Color.white.opacity(0.42))
-                        .frame(width: 2)
-                        .padding(.vertical, 5)
+            if preferences.showDesktopButton {
+                Button {
+                    state.perform(SystemActions.showDesktop)
+                } label: {
+                    ZStack(alignment: .trailing) {
+                        Color.white.opacity(0.035)
+                        Rectangle()
+                            .fill(Color.white.opacity(0.42))
+                            .frame(width: 2)
+                            .padding(.vertical, 5)
+                    }
+                    .frame(width: 28, height: buttonSize)
+                    .contentShape(Rectangle())
                 }
-                .frame(width: 28, height: buttonSize)
-                .contentShape(Rectangle())
+                .buttonStyle(WindowsTaskbarButtonStyle())
+                .help("Show desktop")
+                .accessibilityLabel("Show desktop")
             }
-            .buttonStyle(WindowsTaskbarButtonStyle())
-            .help("Show desktop")
-            .accessibilityLabel("Show desktop")
         }
         .foregroundStyle(TaskbarTheme.foreground)
     }

@@ -11,7 +11,7 @@ struct TaskbarButton<Content: View>: View {
         Button(action: action) {
             content()
                 .frame(width: buttonSize, height: buttonSize)
-                .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         }
         .buttonStyle(WindowsTaskbarButtonStyle())
         .accessibilityLabel(accessibilityLabel)
@@ -30,7 +30,7 @@ private struct WindowsTaskbarButtonStyleBody: View {
     var body: some View {
         configuration.label
             .background(TaskbarHoverBackground(isPressed: configuration.isPressed))
-            .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             .scaleEffect(configuration.isPressed ? 0.94 : 1)
             .contentShape(Rectangle())
             .animation(.easeOut(duration: 0.10), value: configuration.isPressed)
@@ -61,7 +61,7 @@ private final class TaskbarHoverNSView: NSView {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
-        layer?.cornerRadius = 4
+        layer?.cornerRadius = 10
         updateBackground()
     }
 
@@ -94,9 +94,9 @@ private final class TaskbarHoverNSView: NSView {
     private func updateBackground() {
         let color: NSColor
         if isPressed {
-            color = .white.withAlphaComponent(0.06)
+            color = NSColor(calibratedRed: 0.37, green: 0.24, blue: 0.72, alpha: 0.26)
         } else if isHovered {
-            color = .white.withAlphaComponent(0.10)
+            color = NSColor(calibratedRed: 0.47, green: 0.38, blue: 0.82, alpha: 0.20)
         } else {
             color = .clear
         }
@@ -104,6 +104,8 @@ private final class TaskbarHoverNSView: NSView {
         CATransaction.begin()
         CATransaction.setAnimationDuration(0.12)
         layer?.backgroundColor = color.cgColor
+        layer?.borderWidth = isHovered || isPressed ? 0.75 : 0
+        layer?.borderColor = NSColor.white.withAlphaComponent(0.17).cgColor
         CATransaction.commit()
     }
 }

@@ -175,6 +175,30 @@ final class AccessibilityService: ObservableObject {
         return .success
     }
 
+    func setPosition(
+        _ requestedPosition: CGPoint,
+        for window: AccessibilityWindow
+    ) -> WindowOperationResult {
+        refreshAuthorization()
+        guard isTrusted else { return .accessibilityUnavailable }
+        guard frame(of: window) != nil else { return .windowClosed }
+        guard isMovable(window) else { return .windowNotMovable }
+        var position = requestedPosition
+        guard let positionValue = AXValueCreate(.cgPoint, &position) else {
+            return .applicationRejectedFrame
+        }
+        guard AXUIElementSetAttributeValue(
+            window.element,
+            kAXPositionAttribute as CFString,
+            positionValue
+        ) == .success,
+              let resultingFrame = frame(of: window),
+              abs(resultingFrame.minX - requestedPosition.x) <= 3,
+              abs(resultingFrame.minY - requestedPosition.y) <= 3
+        else { return .applicationRejectedFrame }
+        return .success
+    }
+
     func isFullScreen(_ window: AccessibilityWindow) -> Bool {
         let fullScreen: Bool = attribute("AXFullScreen", from: window.element) ?? false
         return fullScreen

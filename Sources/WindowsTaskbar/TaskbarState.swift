@@ -13,6 +13,8 @@ final class TaskbarState: ObservableObject {
     @Published private(set) var windowCounts: [String: Int] = [:]
     @Published private(set) var previewApp: AppDescriptor?
     @Published private(set) var previewWindows: [AccessibilityWindow] = []
+    @Published private(set) var settingsWindowRequest = 0
+    @Published private(set) var settingsAppliedRevision = 0
     @Published var activeFlyout: TaskbarFlyout?
     @Published var startQuery = "" {
         didSet { selectedStartResultIndex = 0 }
@@ -136,11 +138,15 @@ final class TaskbarState: ObservableObject {
 
             let windows = accessibilityService.windows(for: runningApplication)
             windowCounts[app.bundleIdentifier] = windows.count
-            if windows.count > 1 {
+            if windows.count > 1, preferencesService.windowPreviewsEnabled {
                 previewApp = app
                 previewWindows = windows
                 windowPreviewService.refresh(windows: windows)
                 activeFlyout = .windowPreview
+            } else if windows.count > 1, let window = windows.first(where: { !$0.isMinimized })
+                        ?? windows.first {
+                accessibilityService.activate(window, application: runningApplication)
+                refreshWindowInformation(for: app)
             } else if let window = windows.first {
                 accessibilityService.toggle(window, application: runningApplication)
                 refreshWindowInformation(for: app)
@@ -213,6 +219,10 @@ final class TaskbarState: ObservableObject {
     }
 
     func toggleFlyout(_ flyout: TaskbarFlyout) {
+        if flyout == .settings {
+            openSettingsWindow()
+            return
+        }
         if activeFlyout == flyout {
             activeFlyout = nil
             return
@@ -251,6 +261,23 @@ final class TaskbarState: ObservableObject {
         case .onboarding: break
         }
         activeFlyout = flyout
+    }
+
+    func openSettingsWindow() {
+        activeFlyout = nil
+        preferencesService.refreshLaunchAtLogin()
+        settingsWindowRequest &+= 1
+    }
+
+    func refreshAfterSettingsChange() {
+        networkService.refresh()
+        audioService.refresh()
+        batteryService.refresh()
+        bluetoothService.refresh()
+        brightnessService.refresh()
+        accessibilityService.refreshAuthorization()
+        refreshRunningApplications()
+        settingsAppliedRevision &+= 1
     }
 
     func launchFromStart(_ app: AppDescriptor) {

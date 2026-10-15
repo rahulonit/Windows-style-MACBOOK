@@ -292,19 +292,42 @@ func windowManagementPreferencesPersist() {
 
     let preferences = PreferencesService(defaults: defaults)
     preferences.edgeSnappingEnabled = false
+    preferences.windowsStyleControlsEnabled = false
+    preferences.windowPreviewsEnabled = false
+    preferences.showWeatherWidget = false
+    preferences.startMenuLogoStyle = .windows
     preferences.snapActivationDistance = 100
     preferences.navigationIconSize = 19.5
     #expect(preferences.snapActivationDistance == 32)
 
     let reloaded = PreferencesService(defaults: defaults)
     #expect(!reloaded.edgeSnappingEnabled)
+    #expect(!reloaded.windowsStyleControlsEnabled)
+    #expect(!reloaded.windowPreviewsEnabled)
+    #expect(!reloaded.showWeatherWidget)
+    #expect(reloaded.startMenuLogoStyle == .windows)
     #expect(reloaded.snapActivationDistance == 32)
     #expect(reloaded.navigationIconSize == 19.5)
 
     reloaded.resetWindowManagementSettings()
     #expect(reloaded.windowManagementEnabled)
+    #expect(reloaded.windowsStyleControlsEnabled)
+    #expect(reloaded.windowControlsShowTitle)
+    #expect(reloaded.windowPreviewsEnabled)
     #expect(reloaded.edgeSnappingEnabled)
     #expect(reloaded.snapLayoutsEnabled)
     #expect(reloaded.keyboardSnappingEnabled)
     #expect(reloaded.snapActivationDistance == 12)
+
+    reloaded.resetTaskbarItems()
+    #expect(reloaded.showWeatherWidget)
+    #expect(reloaded.showSearchButton)
+    #expect(reloaded.showTaskViewButton)
+    #expect(reloaded.showQuickSettingsButton)
+    #expect(reloaded.showNetworkButton)
+    #expect(reloaded.showVolumeButton)
+    #expect(reloaded.showBatteryButton)
+    #expect(reloaded.showClock)
+    #expect(reloaded.showNotificationButton)
+    #expect(reloaded.showDesktopButton)
 }
